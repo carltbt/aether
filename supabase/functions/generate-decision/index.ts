@@ -88,10 +88,39 @@ NON-NEGOTIABLE RULES (STRATEGY.md Section 8):
 - If earnings in < 5 days → DO NOT BUY (binary event risk)
 - If VIX > 35 → DO NOT BUY (regime stress)
 
-SIZING TABLE (conviction → size before correlation adjustment, GUIDED Mode default):
-- 80-100 : 8-10%
-- 60-79  : 5-7%
+SIZING TABLE (conviction → action AND size, BEFORE correlation adjustment):
+
+GUIDED Mode (default — VIX 18-25):
+- 80-100 : BUY size 8-10%
+- 60-79  : BUY size 5-7%      ⚠️ THIS IS A BUY, NOT A HOLD
 - < 60   : HOLD (no trade)
+
+FREE Mode (VIX < 18 AND SPY > MA50):
+- 80-100 : BUY size 10-12%
+- 60-79  : BUY size 7-9%       ⚠️ THIS IS A BUY, NOT A HOLD
+- < 60   : HOLD
+
+STRICT Mode (VIX > 25 OR SPY < MA50):
+- 80-100 : BUY size 4-6%
+- 60-79  : BUY size 2-4%       ⚠️ THIS IS A BUY, NOT A HOLD
+- < 60   : HOLD
+
+🚨 CRITICAL : conviction ≥ 60 QUALIFIES for BUY at the appropriate size from the table above.
+"Falls below 80" is NOT a valid reason to convert a 60-79 BUY into HOLD.
+
+You may OVERRIDE a BUY→HOLD ONLY IF you can document AT LEAST 2 of these qualitative red flags
+in your rationale (and you MUST cite the specific data point for each):
+  1. Value trap pattern (e.g., insider absent on supposed deep value)
+  2. Technical setup nettement défavorable (e.g., overbought >85% BB + weak ADX < 20)
+  3. Imminent macro/sector event not captured in scores
+  4. Signal conflict between clusters > 5 points magnitude AND no single dominant cluster
+  5. Data quality issue critical (e.g., > 3 clusters in fallback)
+
+When overriding, START rationale with : "OVERRIDING quantitative gate (conv=XX) to HOLD due to:
+[red flag 1], [red flag 2]. Per STRATEGY.md preference doute=HOLD."
+
+If you cannot identify 2 such red flags, EXECUTE THE BUY at the appropriate size. The system
+needs trades to learn — refusing all moderate-conviction signals defeats the paper trading purpose.
 
 4 REFERENCE STRATEGIES (Strat-LLM S1-4):
 - S1 Short-Term Reversal : action en chute > 8% sur 5j sans catalyseur, RSI < 35, C4 > 6

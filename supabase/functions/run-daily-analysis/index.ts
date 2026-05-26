@@ -27,7 +27,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const DEFAULT_LIMIT = 5;
-const HARD_CAP = 10;  // sécurité — ne pas dépasser même si user demande +
+const HARD_CAP = 15;  // V2 — bumped après observation : 25 en parallèle = trop (timeout 50s + anthropic rate limits). 15 = sweet spot empirique.
 
 function jsonResponse(b: unknown, s: number) {
   return new Response(JSON.stringify(b, null, 2), { status: s, headers: { "Content-Type": "application/json" } });

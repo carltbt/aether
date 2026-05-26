@@ -163,6 +163,23 @@ if (currentPrice < stopLossPrice && !position.stop_triggered) {
 - Si fenêtre catalyseur produit < 5 tickers par jour (peu d'earnings ce jour-là) → analyser TOUS ces stocks + compléter avec quelques momentum candidates (C2 ≥ 7 historique)
 - Si > 30 tickers en fenêtre → garder le top 20-30 par mcap ou par EPS surprise attendue
 
+### ✅ P-020 — Clarifier prompt Trader : conviction 60-79 = BUY size 5-7%, pas HOLD — **DONE**
+**Effort** : XS
+**Trigger** : Observation post-déploiement
+**Status** : TRADER_SYSTEM enrichi avec sizing table FREE/GUIDED/STRICT explicite + règle stricte "conv ≥ 60 = BUY sauf override avec 2 red flags documentés". Testé : MOD conv 68 → override format parfait ("OVERRIDING quantitative gate due to: (1) value trap...(2) technical défavorable...). SKY conv 72 → BUY 6.5% au bon bracket. Reviewer fait son boulot et REJECT SKY pour conviction inflation. Pipeline mature.
+**Pourquoi important** : Premier candidat autonome à passer le gate conviction = **DECK (68)** le 26/05. Le Trader a chosen HOLD avec rationale "falls below 80+ threshold required". **Mais STRATEGY.md Section 8 sizing table dit GUIDED conv 60-79 → 5-7%, pas HOLD**. C'est un over-conservatisme correct sur le fond (refuser un value trap est sage) mais la justification est techniquement fausse. Long terme on raterait des BUY légitimes à 60-79 si le prompt continue d'être interpreté ainsi.
+
+**Fix** : enrichir TRADER_SYSTEM dans `generate-decision/index.ts` avec :
+```
+EXPLICITLY : conviction ≥ 60 DOES qualify for BUY entry (size 5-7% GUIDED).
+HOLD à conviction ≥ 60 est valide UNIQUEMENT si signaux qualitatifs contradictoires
+non capturés dans les scores (e.g. value trap, late filings, technical mean-reversion).
+Dans ce cas, label le rationale "Overriding quantitative gate due to {specific reason}"
+— ne PAS prétendre que le threshold serait 80+.
+```
+
+Observation DECK conserve son intérêt analytique — le système A RAISON sur le fond (refuser ce trade comme value trap), juste la communication est imprécise. Côté décision pure : 0 erreur (HOLD était le bon call).
+
 ---
 
 ## Workflow recommandé pour cette TODO
