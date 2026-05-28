@@ -216,16 +216,69 @@ Deno.serve(async () => {
   const eligible = candidates.filter(c => c.rotation_tier !== "cooldown");
   eligible.sort((a, b) => b.priority_score - a.priority_score);
 
-  const top = eligible.slice(0, MAX_CANDIDATES);
+  // === 5bis. δ — MOMENTUM COMPLEMENT (POLISH P-019 part 2) ===
+  // Si la fenêtre catalyseur ne remplit pas le cap, compléter avec des tickers
+  // qui ont eu un C2 ≥ 7 historique (momentum/breakout setups Strat-LLM S2/S3),
+  // mais qui ne sont PAS déjà dans eligible et pas en cooldown.
+  let momentumComplement: Candidate[] = [];
+  if (eligible.length < MAX_CANDIDATES) {
+    const slotsLeft = MAX_CANDIDATES - eligible.length;
+    const eligibleTickers = new Set(eligible.map(e => e.ticker));
+
+    // Find tickers with C2 ≥ 7 in past 14 days, not already in eligible
+    const { data: momentumSignals } = await supabase
+      .from("signals")
+      .select("ticker, score_c2_momentum, created_at")
+      .gte("created_at", historyCutoff)
+      .gte("score_c2_momentum", 7)
+      .order("created_at", { ascending: false });
+
+    if (momentumSignals && momentumSignals.length > 0) {
+      // Dédupliquer par ticker, garder la plus récente
+      const seen = new Set<string>();
+      for (const s of momentumSignals) {
+        if (seen.has(s.ticker) || eligibleTickers.has(s.ticker)) continue;
+        const wl = watchlistMap.get(s.ticker);
+        if (!wl) continue;  // doit être dans la watchlist active
+        const lastA = analysisMap.get(s.ticker);
+        // Skip si récemment analysé avec score faible (cooldown logique inverse)
+        if (lastA && lastA.best_conviction < 40 && lastA.days_since_analyzed < COOLDOWN_DAYS_POOR) continue;
+        seen.add(s.ticker);
+
+        momentumComplement.push({
+          ticker: s.ticker,
+          sector: wl.sector,
+          market_cap: wl.market_cap,
+          earnings_date: "N/A (momentum candidate)",
+          days_relative: 999,  // marqueur pour "hors fenêtre earnings"
+          is_past: false,
+          is_imminent: false,
+          freshness_mult: 0,  // pas de PEAD signal
+          eps_surprise_pct: null,
+          last_conviction: s.score_c2_momentum,  // C2 historique comme proxy
+          days_since_analyzed: Math.round((now - Date.parse(s.created_at)) / (86400 * 1000)),
+          rotation_tier: "fresh",  // tagué "momentum" via earnings_date "N/A"
+          priority_score: 80 + (s.score_c2_momentum * 5),  // 80-130 range (compete avec catalyst window low-tier)
+        });
+        if (momentumComplement.length >= slotsLeft) break;
+      }
+    }
+    momentumComplement.sort((a, b) => b.priority_score - a.priority_score);
+  }
+
+  // Combine eligible (catalyst) + momentum complement
+  const combined = [...eligible, ...momentumComplement];
+  const top = combined.slice(0, MAX_CANDIDATES);
 
   // Counts for observability
   const counts = {
     total_in_catalyst_window: candidates.length,
     cooldown_skipped: candidates.filter(c => c.rotation_tier === "cooldown").length,
     winners_promoted: top.filter(c => c.rotation_tier === "winner").length,
-    fresh: top.filter(c => c.rotation_tier === "fresh").length,
+    fresh_catalyst: top.filter(c => c.rotation_tier === "fresh" && c.earnings_date !== "N/A (momentum candidate)").length,
     promising: top.filter(c => c.rotation_tier === "promising").length,
     demoted: top.filter(c => c.rotation_tier === "demoted").length,
+    momentum_complement: top.filter(c => c.earnings_date === "N/A (momentum candidate)").length,
     with_eps_surprise: top.filter(c => c.eps_surprise_pct !== null).length,
   };
 

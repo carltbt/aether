@@ -2,6 +2,9 @@ import { createAdminClient } from "@/lib/supabase-admin";
 import { formatCurrency, formatNumber, relativeTime, cn } from "@/lib/utils";
 import { LogoutButton } from "@/components/logout-button";
 import { SignalRow } from "@/components/signal-row";
+import { CostTrend } from "@/components/cost-trend";
+import { ShadowSection } from "@/components/shadow-section";
+import { PerfChart } from "@/components/perf-chart";
 
 export const dynamic = "force-dynamic";
 
@@ -56,12 +59,48 @@ export default async function DashboardPage() {
     supabase.from("watchlist").select("symbol", { count: "exact", head: true }).eq("is_active", true),
   ]);
 
+  // β — additional v2 queries
+  const [shadowRes, cost7dRes] = await Promise.all([
+    supabase.from("shadow_positions").select("*").order("opened_at", { ascending: false }).limit(30),
+    supabase.from("agent_logs").select("created_at, cost_usd").gte("created_at", new Date(Date.now() - 7 * 86400 * 1000).toISOString()),
+  ]);
+
   const signals = (signalsRes.data ?? []) as Signal[];
   const dailyCtx = dailyCtxRes.data as DailyCtx | null;
   const heartbeat = heartbeatRes.data as Heartbeat | null;
   const openPositions = openPosRes.data ?? [];
   const cost24h = (costRes.data ?? []).reduce((sum, l) => sum + Number(l.cost_usd ?? 0), 0);
   const watchlistCount = watchlistCountRes.count ?? 0;
+  const shadowPositions = shadowRes.data ?? [];
+
+  // β — cost trend 7 days, grouped by date
+  const costByDay = new Map<string, number>();
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(Date.now() - i * 86400 * 1000).toISOString().slice(0, 10);
+    costByDay.set(d, 0);
+  }
+  for (const log of cost7dRes.data ?? []) {
+    const dayKey = (log.created_at as string).slice(0, 10);
+    if (costByDay.has(dayKey)) costByDay.set(dayKey, (costByDay.get(dayKey) ?? 0) + Number(log.cost_usd ?? 0));
+  }
+  const costTrend = Array.from(costByDay.entries()).map(([date, cost_usd]) => ({ date, cost_usd }));
+
+  // β — shadow P&L cumul timeline
+  const shadowSorted = [...shadowPositions].sort((a, b) =>
+    Date.parse(a.opened_at) - Date.parse(b.opened_at)
+  );
+  let cumShadow = 0;
+  let cumApproved = 0;
+  const perfData = shadowSorted.map(p => {
+    const pnl = Number(p.pnl_pct ?? 0);
+    cumShadow += pnl;
+    if (p.was_reviewer_approved) cumApproved += pnl;
+    return {
+      date: (p.opened_at as string).slice(0, 10),
+      shadow_pnl_pct: cumShadow,
+      reviewer_approved_pnl_pct: cumApproved,
+    };
+  });
 
   const signalsToday = signals.filter(s => {
     const sigDate = new Date(s.created_at);
@@ -160,6 +199,15 @@ export default async function DashboardPage() {
             )}
           </div>
         </section>
+
+        {/* β — Performance + cost charts side by side */}
+        <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <PerfChart data={perfData} />
+          <CostTrend data={costTrend} />
+        </section>
+
+        {/* β — Shadow portfolio (empirical Reviewer validation) */}
+        <ShadowSection positions={shadowPositions} />
 
         {/* Recent signals */}
         <section>

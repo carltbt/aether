@@ -190,6 +190,43 @@ async function sendEmailResend(to: string, subject: string, html: string, text: 
   }
 }
 
+// ζ — Discord webhook alert
+async function sendDiscordWebhook(webhookUrl: string, content: string, urgent = false): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const r = await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username: "Aether",
+        avatar_url: "https://i.imgur.com/AfFp7pu.png",
+        content: urgent ? `@here 🚨 ${content}` : content,
+      }),
+    });
+    if (!r.ok) return { ok: false, error: `${r.status}: ${(await r.text()).slice(0, 200)}` };
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String((e as Error).message ?? e) };
+  }
+}
+
+function buildDiscordSummary(digest: Awaited<ReturnType<typeof buildDigest>>, alerts: string[]): { content: string; urgent: boolean } {
+  const p = digest.portfolio;
+  const pnlEmoji = (p.day_return_pct ?? 0) >= 0 ? "📈" : "📉";
+  const tradesEmoji = digest.activity.trades_executed_today > 0 ? "💸" : "💤";
+  const costEmoji = digest.cost_today_usd > 5 ? "💰" : "💵";
+
+  let content = `**Aether EOD ${digest.date}**\n`;
+  content += `${pnlEmoji} P&L: ${p.day_return_pct !== null ? (p.day_return_pct >= 0 ? "+" : "") + p.day_return_pct.toFixed(2) + "%" : "?"} | ${tradesEmoji} ${digest.activity.trades_executed_today} trades | 📊 ${digest.activity.signals_analyzed_today} signals | ${costEmoji} $${digest.cost_today_usd.toFixed(3)}\n`;
+  content += `🌍 Regime: **${digest.regime.market_regime}** (VIX ${digest.regime.vix?.toFixed(2) ?? "?"})\n`;
+  if (digest.open_positions.length > 0) {
+    content += `📂 Open: ${digest.open_positions.map(p => p.ticker).join(", ")}\n`;
+  }
+  if (alerts.length > 0) {
+    content += `\n⚠️ **ALERTS** :\n${alerts.map(a => `• ${a}`).join("\n")}`;
+  }
+  return { content, urgent: alerts.length > 0 };
+}
+
 Deno.serve(async () => {
   const t0 = Date.now();
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -238,12 +275,31 @@ Deno.serve(async () => {
     emailResult = { sent: false, reason: "no_resend_api_key_configured" };
   }
 
+  // 4. ζ — Discord webhook (optional, alert on anomalies)
+  const discordWebhook = Deno.env.get("DISCORD_WEBHOOK_URL");
+  const discordAlerts: string[] = [];
+  if (status !== "ok") discordAlerts.push(`System status: ${status}`);
+  if (digest.cost_today_usd > 10) discordAlerts.push(`High cost: $${digest.cost_today_usd.toFixed(2)} (cap > $10)`);
+  if (digest.activity.signals_analyzed_today === 0 && new Date().getUTCDay() >= 1 && new Date().getUTCDay() <= 5) {
+    discordAlerts.push(`Weekday + 0 signals analyzed — cron may have failed`);
+  }
+  let discordResult: { sent: boolean; error?: string; reason?: string } = { sent: false };
+  if (discordWebhook) {
+    const { content, urgent } = buildDiscordSummary(digest, discordAlerts);
+    const send = await sendDiscordWebhook(discordWebhook, content, urgent);
+    discordResult = send.ok ? { sent: true } : { sent: false, error: send.error };
+  } else {
+    discordResult = { sent: false, reason: "no_discord_webhook_url_configured" };
+  }
+
   return jsonResponse({
     ok: true,
     date: digest.date,
     heartbeat_id: heartbeat?.id,
     digest,
     email: emailResult,
+    discord: discordResult,
+    discord_alerts: discordAlerts,
     email_subject_preview: email.subject,
     duration_ms: Date.now() - t0,
   }, 200);

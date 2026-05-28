@@ -18,11 +18,18 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "jsr:@supabase/supabase-js@2";
 
 // --- Constants -------------------------------------------------------------
-const MODEL = "claude-sonnet-4-5-20250929";  // pinned (variance stable)
+// ε — TIERED MODELS (POLISH ε) :
+// Pass 1 (technical) + Pass 2 (sentiment) = analyses déterministes pures →
+//   Haiku 4.5 suffit ($1/$5 per M), 3× moins cher.
+// Pass 3 (fundamentals) = raisonnement complexe multi-clusters → Sonnet 4.5.
+const MODEL_HAIKU = "claude-haiku-4-5-20251001";   // Pass 1 + 2
+const MODEL_SONNET = "claude-sonnet-4-5-20250929"; // Pass 3
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages";
-// Pricing Sonnet 4.5 — $3/M input, $15/M output
-const COST_INPUT_PER_M = 3.0;
-const COST_OUTPUT_PER_M = 15.0;
+// Pricing
+const COST_HAIKU_INPUT_PER_M = 1.0;
+const COST_HAIKU_OUTPUT_PER_M = 5.0;
+const COST_SONNET_INPUT_PER_M = 3.0;
+const COST_SONNET_OUTPUT_PER_M = 15.0;
 
 // --- Types -----------------------------------------------------------------
 interface ClaudeUsage {
@@ -46,10 +53,13 @@ interface CallResult {
 }
 
 // --- Helpers ---------------------------------------------------------------
-function costUsd(usage?: ClaudeUsage): number {
+function costUsd(usage: ClaudeUsage | undefined, model: string): number {
   const inp = usage?.input_tokens ?? 0;
   const out = usage?.output_tokens ?? 0;
-  return (inp * COST_INPUT_PER_M + out * COST_OUTPUT_PER_M) / 1_000_000;
+  const isHaiku = model.includes("haiku");
+  const inP = isHaiku ? COST_HAIKU_INPUT_PER_M : COST_SONNET_INPUT_PER_M;
+  const outP = isHaiku ? COST_HAIKU_OUTPUT_PER_M : COST_SONNET_OUTPUT_PER_M;
+  return (inp * inP + out * outP) / 1_000_000;
 }
 
 async function callClaude(
@@ -57,7 +67,8 @@ async function callClaude(
   systemPrompt: string,
   userPrompt: string,
   maxTokens = 1024,
-  temperature = 0,  // P-003 — déterministe pour reproductibilité audit/debug
+  temperature = 0,           // P-003 — déterministe pour reproductibilité
+  model = MODEL_SONNET,      // ε — Pass 1+2 override avec MODEL_HAIKU
 ): Promise<CallResult> {
   const t0 = Date.now();
   try {
@@ -69,7 +80,7 @@ async function callClaude(
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        model: MODEL,
+        model,
         max_tokens: maxTokens,
         temperature,
         system: systemPrompt,
@@ -105,7 +116,7 @@ async function callClaude(
       raw_text: text,
       usage: data.usage,
       latency_ms,
-      cost_usd: costUsd(data.usage),
+      cost_usd: costUsd(data.usage, model),
     };
   } catch (e) {
     return {
@@ -584,13 +595,13 @@ Deno.serve(async (req: Request) => {
 
   // === Step 2: Pass 1 — TECHNICAL ===
   const technicalBlock = prepTechnical(collected, ticker);
-  const pass1 = await callClaude(anthropicKey, PASS1_SYSTEM, pass1UserPrompt(ticker, technicalBlock), 800);
+  const pass1 = await callClaude(anthropicKey, PASS1_SYSTEM, pass1UserPrompt(ticker, technicalBlock), 800, 0, MODEL_HAIKU);
   const pass1LogId = await logCall(supabase, "analysis_pass1", ticker, pass1);
   const c2Score = (pass1.parsed?.score_c2_momentum as number | undefined) ?? null;
 
   // === Step 3: Pass 2 — SENTIMENT (with context-priming if C2 ≥ 7) ===
   const sentPrep = prepSentiment(collected, ticker, c2Score);
-  const pass2 = await callClaude(anthropicKey, PASS2_SYSTEM, pass2UserPrompt(ticker, sentPrep.userPrompt), 800);
+  const pass2 = await callClaude(anthropicKey, PASS2_SYSTEM, pass2UserPrompt(ticker, sentPrep.userPrompt), 800, 0, MODEL_HAIKU);
   const pass2LogId = await logCall(supabase, "analysis_pass2", ticker, pass2);
 
   // === Step 4: Pass 3 — FUNDAMENTALS ===
