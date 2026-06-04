@@ -40,27 +40,52 @@ async function checkAlpaca() {
   const secret = Deno.env.get("ALPACA_API_SECRET_KEY");
   if (!base || !keyId || !secret) return { ok: false, error: "missing_env_vars" };
 
+  // PAPER vs LIVE — the host is the only determinant (not a secret).
+  //   paper-api.alpaca.markets → PAPER (no real money)
+  //   api.alpaca.markets       → LIVE  (real money) 🚨
+  let host = "unparseable";
+  let env: "PAPER" | "LIVE" | "UNKNOWN" = "UNKNOWN";
   try {
-    const r = await fetch(`${base}/v2/clock`, {
-      headers: {
-        "APCA-API-KEY-ID": keyId,
-        "APCA-API-SECRET-KEY": secret,
-      },
-    });
-    if (!r.ok) {
-      return { ok: false, status: r.status, body: (await r.text()).slice(0, 300) };
+    host = new URL(base).host;
+    if (host.startsWith("paper-api.")) env = "PAPER";
+    else if (host === "api.alpaca.markets") env = "LIVE";
+  } catch { /* keep defaults */ }
+
+  const headers = { "APCA-API-KEY-ID": keyId, "APCA-API-SECRET-KEY": secret };
+
+  try {
+    const [clockR, acctR] = await Promise.all([
+      fetch(`${base}/v2/clock`, { headers }),
+      fetch(`${base}/v2/account`, { headers }),
+    ]);
+    if (!clockR.ok) {
+      return { ok: false, host, env, status: clockR.status, body: (await clockR.text()).slice(0, 300) };
     }
-    const data = await r.json();
+    const clock = await clockR.json();
+    // Account snapshot — account_number masked, no secrets.
+    let account: Record<string, unknown> | undefined;
+    if (acctR.ok) {
+      const a = await acctR.json();
+      const num = String(a.account_number ?? "");
+      account = {
+        account_number_masked: num ? `${num.slice(0, 3)}***${num.slice(-2)}` : null,
+        status: a.status,
+        cash: a.cash,
+        portfolio_value: a.portfolio_value,
+        buying_power: a.buying_power,
+        pattern_day_trader: a.pattern_day_trader,
+        // Alpaca paper accounts always return crypto_status etc; the env above is authoritative.
+      };
+    }
     return {
       ok: true,
-      sample: {
-        is_open: data.is_open,
-        timestamp: data.timestamp,
-        next_open: data.next_open,
-      },
+      host,
+      env,                       // 👈 PAPER / LIVE / UNKNOWN — the answer
+      sample: { is_open: clock.is_open, timestamp: clock.timestamp, next_open: clock.next_open },
+      account,
     };
   } catch (e) {
-    return { ok: false, error: String((e as Error).message ?? e) };
+    return { ok: false, host, env, error: String((e as Error).message ?? e) };
   }
 }
 

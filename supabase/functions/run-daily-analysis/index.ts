@@ -23,8 +23,8 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 
 const DEFAULT_LIMIT = 15;
 const HARD_CAP = 25;
-const BATCH_SIZE = 5;          // 5 stocks en parallèle par batch (sous rate limit Anthropic standard)
-const BATCH_DELAY_MS = 1000;   // pause entre batches pour étaler les requêtes
+const BATCH_SIZE = 3;          // v3 — réduit à 3 après obs 29 mai : batches de 5 → 3 PENDING orphans car ~70 RPM peak burst dépassait 50 RPM standard tier. 3 stocks parallèles = ~21 RPM peak, safe.
+const BATCH_DELAY_MS = 2000;   // bumped à 2s pour étaler davantage
 
 interface Candidate {
   ticker: string;

@@ -70,6 +70,22 @@ async function getAlpacaClock(): Promise<{ is_open: boolean; next_open?: string 
   return r.data;
 }
 
+// Audit fix (S4) : prix de référence temps réel via FMP. L'entry_price_target du
+// Trader date de l'analyse (pré-marché, ~3h avant l'exécution). On recalcule
+// sizing + SL/TP sur le prix courant pour garantir un bracket valide.
+async function getCurrentPrice(ticker: string): Promise<number | null> {
+  const fmpKey = Deno.env.get("FMP_API_KEY");
+  if (!fmpKey) return null;
+  try {
+    const r = await fetch(`https://financialmodelingprep.com/stable/quote?symbol=${ticker}&apikey=${fmpKey}`);
+    if (!r.ok) return null;
+    const d = await r.json();
+    return Array.isArray(d) && typeof d[0]?.price === "number" ? d[0].price : null;
+  } catch {
+    return null;
+  }
+}
+
 Deno.serve(async (req: Request) => {
   const t0 = Date.now();
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
@@ -127,15 +143,31 @@ Deno.serve(async (req: Request) => {
   const takeProfitPct = sig.take_profit_pct as number;
   const entryTarget = (sig.entry_price_target as number) ?? 0;
 
+  // Audit fix (S4) : prix de référence = quote temps réel, fallback entry_price_target.
+  const refPrice = (await getCurrentPrice(sig.ticker)) ?? entryTarget;
+  if (!refPrice || refPrice <= 0) {
+    return jsonResponse({ ok: false, error: "no_reference_price", ticker: sig.ticker, entry_target: entryTarget }, 502);
+  }
+
   const positionUsd = (account.portfolio_value ?? 0) * (positionSizePct / 100);
-  // Alpaca fractional shares supported → notional approach
-  const stopLossPrice = entryTarget * (1 - stopLossPct / 100);
-  const takeProfitPrice = entryTarget * (1 + takeProfitPct / 100);
+  // Audit fix (Bloquant 2) : qty en actions ENTIÈRES. Alpaca rejette (422) tout ordre
+  // notional/fractionnel combiné à un bracket order. On arrondit au plancher.
+  const qty = Math.floor(positionUsd / refPrice);
+  const stopLossPrice = refPrice * (1 - stopLossPct / 100);
+  const takeProfitPrice = refPrice * (1 + takeProfitPct / 100);
+
+  if (sig.action === "BUY" && qty < 1) {
+    return jsonResponse({
+      ok: false, error: "position_too_small_for_whole_share",
+      detail: { position_usd: positionUsd.toFixed(2), ref_price: refPrice, computed_qty: qty },
+      hint: "Augmenter position_size_pct ou le capital — 1 action minimum (pas de fractionnel avec bracket).",
+    }, 200);
+  }
 
   // --- Submit bracket order ---
   const orderPayload = sig.action === "BUY" ? {
     symbol: sig.ticker,
-    notional: positionUsd.toFixed(2),  // Alpaca supports fractional via notional
+    qty: String(qty),
     side: "buy",
     type: "market",  // V1 simple market entry; STRATEGY.md says limit +0.2% but market is simpler
     time_in_force: "day",
@@ -159,7 +191,7 @@ Deno.serve(async (req: Request) => {
       would_submit: orderPayload,
       account: { cash: account.cash, portfolio_value: account.portfolio_value, buying_power: account.buying_power },
       market_open: clock.is_open,
-      computed: { positionUsd: positionUsd.toFixed(2), stopLossPrice: stopLossPrice.toFixed(2), takeProfitPrice: takeProfitPrice.toFixed(2) },
+      computed: { ref_price: refPrice, qty, positionUsd: positionUsd.toFixed(2), stopLossPrice: stopLossPrice.toFixed(2), takeProfitPrice: takeProfitPrice.toFixed(2) },
       duration_ms: Date.now() - t0,
     }, 200);
   }
@@ -181,23 +213,24 @@ Deno.serve(async (req: Request) => {
 
   const order = orderResp.data!;
 
-  // --- Update signal as executed ---
-  await supabase.from("signals").update({
+  // --- Update signal as executed (Audit fix Bloquant 3 : capture l'erreur) ---
+  const { error: sigUpErr } = await supabase.from("signals").update({
     executed: true,
     alpaca_order_id: order.id,
   }).eq("id", signalId);
+  if (sigUpErr) console.error("signals executed update failed:", sigUpErr);
 
   // --- For BUY : create positions row (status='OPEN') ---
   let positionId: string | null = null;
   if (sig.action === "BUY") {
-    const filledPrice = order.filled_avg_price ? parseFloat(order.filled_avg_price) : entryTarget;
-    const qty = order.qty ? parseFloat(order.qty) : (positionUsd / filledPrice);
+    const filledPrice = order.filled_avg_price ? parseFloat(order.filled_avg_price) : refPrice;
+    const filledQty = order.qty ? parseFloat(order.qty) : qty;
     const { data: pos, error: posErr } = await supabase.from("positions").insert({
       ticker: sig.ticker,
       signal_id: signalId,
       entry_price: filledPrice,
-      quantity: qty,
-      position_size_usd: positionUsd,
+      quantity: filledQty,
+      position_size_usd: filledPrice * filledQty,
       stop_loss_price: stopLossPrice,
       take_profit_price: takeProfitPrice,
       alpaca_order_id: order.id,

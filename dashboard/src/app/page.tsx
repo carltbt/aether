@@ -5,8 +5,21 @@ import { SignalRow } from "@/components/signal-row";
 import { CostTrend } from "@/components/cost-trend";
 import { ShadowSection } from "@/components/shadow-section";
 import { PerfChart } from "@/components/perf-chart";
+import { PerformanceSection, type Snapshot } from "@/components/performance-section";
 
 export const dynamic = "force-dynamic";
+
+async function getSnapshot(): Promise<Snapshot | null> {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  if (!url) return null;
+  try {
+    const r = await fetch(`${url}/functions/v1/portfolio-snapshot`, { method: "POST", cache: "no-store" });
+    if (!r.ok) return null;
+    return (await r.json()) as Snapshot;
+  } catch {
+    return null;
+  }
+}
 
 interface Signal {
   id: string;
@@ -50,13 +63,13 @@ export default async function DashboardPage() {
   const supabase = createAdminClient();
 
   // Auth is gated by middleware (proxy) — if we're here, user is authenticated via access code
-  const [signalsRes, dailyCtxRes, heartbeatRes, openPosRes, costRes, watchlistCountRes] = await Promise.all([
+  const [signalsRes, dailyCtxRes, heartbeatRes, costRes, watchlistCountRes, snapshot] = await Promise.all([
     supabase.from("signals").select("*").order("created_at", { ascending: false }).limit(20),
     supabase.from("daily_context").select("*").order("context_date", { ascending: false }).limit(1).maybeSingle(),
     supabase.from("system_heartbeats").select("*").order("recorded_at", { ascending: false }).limit(1).maybeSingle(),
-    supabase.from("positions").select("id, ticker, entry_price, quantity, position_size_usd, stop_loss_price, take_profit_price, status, opened_at").eq("status", "OPEN"),
     supabase.from("agent_logs").select("cost_usd").gte("created_at", new Date(Date.now() - 24 * 3600 * 1000).toISOString()),
     supabase.from("watchlist").select("symbol", { count: "exact", head: true }).eq("is_active", true),
+    getSnapshot(),
   ]);
 
   // β — additional v2 queries
@@ -68,7 +81,6 @@ export default async function DashboardPage() {
   const signals = (signalsRes.data ?? []) as Signal[];
   const dailyCtx = dailyCtxRes.data as DailyCtx | null;
   const heartbeat = heartbeatRes.data as Heartbeat | null;
-  const openPositions = openPosRes.data ?? [];
   const cost24h = (costRes.data ?? []).reduce((sum, l) => sum + Number(l.cost_usd ?? 0), 0);
   const watchlistCount = watchlistCountRes.count ?? 0;
   const shadowPositions = shadowRes.data ?? [];
@@ -161,44 +173,8 @@ export default async function DashboardPage() {
           />
         </section>
 
-        {/* Open positions */}
-        <section>
-          <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3">Open Positions</h2>
-          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-            {openPositions.length === 0 ? (
-              <div className="px-6 py-12 text-center text-sm text-slate-400">
-                No open positions yet.
-                <br />
-                <span className="text-xs">Système en DRY_RUN — aucun ordre Alpaca exécuté pour l&apos;instant.</span>
-              </div>
-            ) : (
-              <table className="w-full text-sm">
-                <thead className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wider">
-                  <tr>
-                    <th className="px-4 py-3 text-left">Ticker</th>
-                    <th className="px-4 py-3 text-right">Entry</th>
-                    <th className="px-4 py-3 text-right">Size</th>
-                    <th className="px-4 py-3 text-right">Stop</th>
-                    <th className="px-4 py-3 text-right">Target</th>
-                    <th className="px-4 py-3 text-right">Opened</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {openPositions.map((p) => (
-                    <tr key={p.id} className="hover:bg-slate-50">
-                      <td className="px-4 py-3 ticker">{p.ticker}</td>
-                      <td className="px-4 py-3 text-right tabular">{formatCurrency(Number(p.entry_price))}</td>
-                      <td className="px-4 py-3 text-right tabular">{formatCurrency(Number(p.position_size_usd), { compact: true })}</td>
-                      <td className="px-4 py-3 text-right tabular text-red-600">{formatCurrency(Number(p.stop_loss_price))}</td>
-                      <td className="px-4 py-3 text-right tabular text-emerald-600">{formatCurrency(Number(p.take_profit_price))}</td>
-                      <td className="px-4 py-3 text-right text-xs text-slate-500">{relativeTime(p.opened_at)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        </section>
+        {/* Performance — live Alpaca paper (équité, P&L, courbe, positions) */}
+        <PerformanceSection snapshot={snapshot} />
 
         {/* β — Performance + cost charts side by side */}
         <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
