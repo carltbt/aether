@@ -6,6 +6,7 @@ import { CostTrend } from "@/components/cost-trend";
 import { ShadowSection } from "@/components/shadow-section";
 import { PerfChart } from "@/components/perf-chart";
 import { PerformanceSection, type Snapshot } from "@/components/performance-section";
+import { ClosedPositionsSection, type ClosedPosition } from "@/components/closed-positions-section";
 
 export const dynamic = "force-dynamic";
 
@@ -64,7 +65,7 @@ export default async function DashboardPage() {
 
   // Auth is gated by middleware (proxy) — if we're here, user is authenticated via access code
   const [signalsRes, dailyCtxRes, heartbeatRes, costRes, watchlistCountRes, snapshot] = await Promise.all([
-    supabase.from("signals").select("*").order("created_at", { ascending: false }).limit(20),
+    supabase.from("signals").select("*").order("created_at", { ascending: false }).limit(500),
     supabase.from("daily_context").select("*").order("context_date", { ascending: false }).limit(1).maybeSingle(),
     supabase.from("system_heartbeats").select("*").order("recorded_at", { ascending: false }).limit(1).maybeSingle(),
     supabase.from("agent_logs").select("cost_usd").gte("created_at", new Date(Date.now() - 24 * 3600 * 1000).toISOString()),
@@ -73,12 +74,14 @@ export default async function DashboardPage() {
   ]);
 
   // β — additional v2 queries
-  const [shadowRes, cost7dRes] = await Promise.all([
+  const [shadowRes, cost7dRes, closedPosRes] = await Promise.all([
     supabase.from("shadow_positions").select("*").order("opened_at", { ascending: false }).limit(30),
     supabase.from("agent_logs").select("created_at, cost_usd").gte("created_at", new Date(Date.now() - 7 * 86400 * 1000).toISOString()),
+    supabase.from("positions").select("id, ticker, entry_price, exit_price, quantity, pnl_usd, pnl_pct, exit_reason, hold_days, opened_at, closed_at").eq("status", "CLOSED").order("closed_at", { ascending: false }),
   ]);
 
   const signals = (signalsRes.data ?? []) as Signal[];
+  const closedPositions = (closedPosRes.data ?? []) as ClosedPosition[];
   const dailyCtx = dailyCtxRes.data as DailyCtx | null;
   const heartbeat = heartbeatRes.data as Heartbeat | null;
   const cost24h = (costRes.data ?? []).reduce((sum, l) => sum + Number(l.cost_usd ?? 0), 0);
@@ -176,6 +179,9 @@ export default async function DashboardPage() {
         {/* Performance — live Alpaca paper (équité, P&L, courbe, positions) */}
         <PerformanceSection snapshot={snapshot} />
 
+        {/* Historique des positions clôturées (ventes) */}
+        <ClosedPositionsSection positions={closedPositions} />
+
         {/* β — Performance + cost charts side by side */}
         <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           <PerfChart data={perfData} />
@@ -185,17 +191,17 @@ export default async function DashboardPage() {
         {/* β — Shadow portfolio (empirical Reviewer validation) */}
         <ShadowSection positions={shadowPositions} />
 
-        {/* Recent signals */}
+        {/* Toutes les analyses (scrollable, pas seulement les dernières) */}
         <section>
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Recent Signals</h2>
-            <span className="text-xs text-slate-400">last 20</span>
+            <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Toutes les analyses</h2>
+            <span className="text-xs text-slate-400">{formatNumber(signals.length)} signaux</span>
           </div>
           <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
             {signals.length === 0 ? (
               <div className="px-6 py-12 text-center text-sm text-slate-400">No signals yet.</div>
             ) : (
-              <div className="divide-y divide-slate-100">
+              <div className="divide-y divide-slate-100 max-h-[640px] overflow-y-auto">
                 {signals.map((s) => (
                   <SignalRow key={s.id} signal={s} />
                 ))}

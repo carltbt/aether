@@ -48,6 +48,44 @@ function jsonResponse(b: unknown, s: number) {
   return new Response(JSON.stringify(b, null, 2), { status: s, headers: { "Content-Type": "application/json" } });
 }
 
+// --- Real portfolio state (Alpaca) — remplace les mocks V1 (Honnêteté #1) ---
+async function alpacaGet<T>(path: string): Promise<T | null> {
+  const base = Deno.env.get("ALPACA_API_BASE_URL");
+  const keyId = Deno.env.get("ALPACA_API_KEY_ID");
+  const secret = Deno.env.get("ALPACA_API_SECRET_KEY");
+  if (!base || !keyId || !secret) return null;
+  try {
+    const r = await fetch(`${base}${path}`, { headers: { "APCA-API-KEY-ID": keyId, "APCA-API-SECRET-KEY": secret } });
+    if (!r.ok) return null;
+    return await r.json() as T;
+  } catch {
+    return null;
+  }
+}
+
+async function getRealPortfolioState(): Promise<{ cashPct: number | null; drawdownPct: number | null }> {
+  const acct = await alpacaGet<{ cash: string; equity: string }>("/v2/account");
+  if (!acct) return { cashPct: null, drawdownPct: null };
+  const cash = parseFloat(acct.cash);
+  const equity = parseFloat(acct.equity);
+  const cashPct = equity > 0 ? (cash / equity) * 100 : null;
+  // Drawdown = (peak - equity) / peak sur l'historique 3M
+  const hist = await alpacaGet<{ equity: number[] }>("/v2/account/portfolio/history?period=3M&timeframe=1D");
+  let drawdownPct: number | null = null;
+  if (hist && Array.isArray(hist.equity) && hist.equity.length) {
+    const valid = hist.equity.filter(e => e > 0);
+    const peak = Math.max(equity, ...valid);
+    drawdownPct = peak > 0 ? Math.max(0, ((peak - equity) / peak) * 100) : null;
+  }
+  return { cashPct, drawdownPct };
+}
+
+async function getRealVix(supabase: SupabaseClient): Promise<number | null> {
+  const { data } = await supabase.from("daily_context").select("vix").order("context_date", { ascending: false }).limit(1).maybeSingle();
+  const v = data?.vix;
+  return v == null ? null : Number(v);
+}
+
 async function loadSignalAndContext(supabase: SupabaseClient, signalId: string | undefined, ticker: string | undefined) {
   let sigQuery = supabase.from("signals").select("*").order("created_at", { ascending: false }).limit(1);
   if (signalId) sigQuery = supabase.from("signals").select("*").eq("id", signalId).limit(1);
@@ -111,6 +149,7 @@ function validate(decision: {
   tickerActive: boolean;
   earningsInNextNDays: number | null;
   openPositions: Array<{ ticker: string; sector: string | null }>;
+  alreadyHoldingTicker: boolean;
   cashPct: number;
   totalDrawdownPct: number;
   vix: number;
@@ -123,6 +162,12 @@ function validate(decision: {
   if (decision.action === "HOLD") {
     return { approve: true, reject_reasons: [], warnings: ["HOLD action — no order to validate"], position_size_pct_final: 0, correlation_adjustment_applied: 0, correlation_note: "", checks_passed: ["hold_passthrough"] };
   }
+
+  // 0. Dédup ticker — déjà une position ouverte sur ce titre → REJECT
+  //    (évite le doublon / averaging-up non intentionnel : ex. M acheté 2 jours de suite)
+  if (context.alreadyHoldingTicker) {
+    reject_reasons.push(`already_open_position_in_${decision.ticker}`);
+  } else checks_passed.push("no_duplicate_ticker");
 
   // 1. Ticker anchoring (P13) — detect confusion
   if (decision.ticker !== context.requestedTicker) {
@@ -244,12 +289,12 @@ Deno.serve(async (req: Request) => {
   const tickerInfo = await isTickerActive(supabase, sig.ticker);
   const openPositions = await getOpenPositions(supabase);
 
-  // V1 : portfolio defaults (no real positions yet). Allow override via POST.
-  const cashPct = portfolioOverride?.cash_pct ?? 100;
-  const totalDrawdownPct = portfolioOverride?.total_drawdown_pct ?? 0;
-
-  // V1 : VIX mock — to be replaced by real fetch in Phase 4 (P-001)
-  const vix = 18;
+  // Real portfolio state (Alpaca) + VIX réel (daily_context). POST override > réel > fallback.
+  const realState = await getRealPortfolioState();
+  const realVix = await getRealVix(supabase);
+  const cashPct = portfolioOverride?.cash_pct ?? realState.cashPct ?? 100;
+  const totalDrawdownPct = portfolioOverride?.total_drawdown_pct ?? realState.drawdownPct ?? 0;
+  const vix = realVix ?? 18;
 
   // P-002 : earnings 5d check — fetch FMP pour ce ticker spécifiquement
   // Si earnings dans < 5 jours → REJECT (risque binaire STRATEGY.md Section 8 Couche 1)
@@ -273,6 +318,7 @@ Deno.serve(async (req: Request) => {
     tickerActive: tickerInfo.active,
     earningsInNextNDays,
     openPositions: openPositions.map(p => ({ ticker: p.ticker, sector: p.sector })),
+    alreadyHoldingTicker: openPositions.some(p => p.ticker === sig.ticker),
     cashPct,
     totalDrawdownPct,
     vix,
@@ -303,9 +349,15 @@ Deno.serve(async (req: Request) => {
       ticker_sector: tickerInfo.sector,
       ticker_active: tickerInfo.active,
       open_positions_count: openPositions.length,
+      already_holding_ticker: openPositions.some(p => p.ticker === sig.ticker),
       cash_pct: cashPct,
       total_drawdown_pct: totalDrawdownPct,
       vix,
+      sources: {
+        cash: portfolioOverride?.cash_pct != null ? "override" : realState.cashPct != null ? "alpaca" : "fallback",
+        drawdown: portfolioOverride?.total_drawdown_pct != null ? "override" : realState.drawdownPct != null ? "alpaca" : "fallback",
+        vix: realVix != null ? "daily_context" : "fallback",
+      },
       earnings_in_next_n_days: earningsInNextNDays,
     },
     duration_ms: Date.now() - t0,
