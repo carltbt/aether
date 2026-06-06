@@ -93,6 +93,19 @@ Deno.serve(async () => {
       })).filter(pt => pt.equity > 0)
     : [];
 
+  // Le dernier bar journalier d'Alpaca = clôture de la veille (retard intraday d'une
+  // séance). On ancre le dernier point sur l'équité LIVE pour que la courbe colle
+  // aux KPI (P&L total). Sinon : courbe +313 vs KPI +496 = incohérence apparente.
+  if (equity !== null) {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const livePoint = { date: todayStr, equity, pnl: equity - BASELINE };
+    if (equityCurve.length && equityCurve[equityCurve.length - 1].date === todayStr) {
+      equityCurve[equityCurve.length - 1] = livePoint;
+    } else {
+      equityCurve.push(livePoint);
+    }
+  }
+
   // --- 4 : Métriques réalisées (positions CLOSED réelles) ---
   const { data: closed } = await supabase
     .from("positions")
