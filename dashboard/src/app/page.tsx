@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase-admin";
 import { formatCurrency, formatNumber, relativeTime, cn } from "@/lib/utils";
 import { LogoutButton } from "@/components/logout-button";
@@ -147,6 +148,7 @@ export default async function DashboardPage() {
                 last beat {relativeTime(heartbeat.recorded_at)}
               </span>
             )}
+            <Link href="/pipeline" className="text-xs text-slate-500 hover:text-slate-900 transition-colors">Pipeline LLM →</Link>
             <LogoutButton />
           </div>
         </div>
