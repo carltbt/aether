@@ -53,3 +53,34 @@ Ces seuils découlent du trigger D6 défini dans STRATEGY.md Section 14 pour Cla
 Si C1 dégradé sous-performe pendant les 6 premières semaines, on aura "perdu" potentiellement quelques bons signaux qui auraient été captés avec le transcript pondéré. Cette perte est acceptée comme prix de la validation empirique.
 
 ---
+
+## D-002 — Refonte de la logique de sortie (diagnostic 18/06)
+
+**Date** : 2026-06-20
+**Statut** : Actif — réévaluation après 4 semaines de paper trading
+**Sections STRATEGY.md impactées** : 8 (Couche 2/3, gestion de position)
+
+### Contexte (ce qui a déclenché)
+Sur les ~10 premiers jours live, le portefeuille a culminé à +$559 puis tout rendu (−$346) : les gains n'étaient pas protégés. Causes identifiées :
+1. Bracket Alpaca soumis en `time_in_force=day` → les legs stop/TP **expiraient** chaque soir → aucune protection native (0 ordre ouvert observé). GTLB a fini à **−11.3%** alors que son stop était à −7.5%.
+2. `update-positions` ne tournait **qu'une fois en séance** (cron 13/17/21 UTC, marché 13:30–20:00).
+3. Trailing trop haut (lock dès +8%) → les hausses 3–7% (la majorité) round-trippaient jusqu'au stop.
+4. Hold max 21j ≫ demi-vie PEAD (~6-7j).
+5. Les positions tenues étaient ré-analysées mais sans **aucun chemin de sortie LLM** (HOLD = ne pas entrer).
+
+### Écarts vs STRATEGY.md
+- **Bracket GTC** (au lieu de l'entrée day) : entrée LIMIT marketable (+0.3%) + `time_in_force=gtc` → legs stop/TP persistants.
+- **Cadence update-positions** : `*/30 13-20` (toutes les 30 min en séance) au lieu de 3×/jour. + cancel des ordres Alpaca du symbole avant toute vente manuelle (anti-oversell).
+- **Trailing plus fin** : lock break-even+0.5% dès +4% (vs +8%), puis +3% / +7% / +12% à +7 / +12 / +18%.
+- **Règle give-back (NOUVELLE)** : sortie si pic de gain ≥ +5% ET retour sous 50% du pic.
+- **Hold max 21j → 10j**.
+- **review-positions (NOUVELLE fonction, cron 15:15 UTC)** : revue LLM quotidienne HOLD/SELL des positions tenues, avec contexte du holding (P&L, jours, pic, thèse) — peut déclencher la vente. Couche qualitative complémentaire aux règles prix.
+- **Dédup ticker** (déjà D-rien, noté ici) : validate-order rejette si position OPEN sur le ticker ; execute-order vérifie aussi les positions Alpaca live ; select-daily-candidates exclut les tickers détenus.
+
+### Pourquoi
+Protéger le capital prime sur la fidélité à la spec V1. Les seuils de STRATEGY.md (trailing 8%, hold 21j) ont été écrits avant observation empirique ; les données live montrent qu'ils laissent fuir les gains sur des swings PEAD courts.
+
+### Critères de réévaluation
+Sur 4 semaines : si le profit factor passe > 1.3 ET le give-back médian (gain rendu) < 30% → la nouvelle logique tient. Sinon, recalibrer les seuils (give-back 50%→40%, hold 10→7j). Mesurer aussi le taux de SELL de review-positions (si > 50% des revues = SELL → prompt trop agressif, churn).
+
+---

@@ -104,6 +104,12 @@ Deno.serve(async () => {
     wlRows.map((r) => [r.symbol, { symbol: r.symbol, sector: r.sector, market_cap: r.market_cap }]),
   );
 
+  // P3 — exclure les tickers déjà détenus : le pipeline BUY ne peut pas les
+  // racheter (dedup) et ils sont gérés par review-positions (sortie LLM) +
+  // update-positions (prix). Économise ~7 appels Claude/jour/ticker détenu.
+  const { data: openPosRows } = await supabase.from("positions").select("ticker").eq("status", "OPEN");
+  const heldTickers = new Set((openPosRows ?? []).map((p) => p.ticker));
+
   // === 2. Past analyses (last 14d) for rotation logic ===
   const historyCutoff = new Date(Date.now() - HISTORY_DAYS * 86400 * 1000).toISOString();
   const { data: pastSignals } = await supabase
@@ -266,13 +272,14 @@ Deno.serve(async () => {
     momentumComplement.sort((a, b) => b.priority_score - a.priority_score);
   }
 
-  // Combine eligible (catalyst) + momentum complement
-  const combined = [...eligible, ...momentumComplement];
+  // Combine eligible (catalyst) + momentum complement, MINUS les tickers détenus (P3)
+  const combined = [...eligible, ...momentumComplement].filter(c => !heldTickers.has(c.ticker));
   const top = combined.slice(0, MAX_CANDIDATES);
 
   // Counts for observability
   const counts = {
     total_in_catalyst_window: candidates.length,
+    held_excluded: [...eligible, ...momentumComplement].filter(c => heldTickers.has(c.ticker)).length,
     cooldown_skipped: candidates.filter(c => c.rotation_tier === "cooldown").length,
     winners_promoted: top.filter(c => c.rotation_tier === "winner").length,
     fresh_catalyst: top.filter(c => c.rotation_tier === "fresh" && c.earnings_date !== "N/A (momentum candidate)").length,

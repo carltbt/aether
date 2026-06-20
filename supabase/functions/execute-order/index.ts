@@ -3,22 +3,11 @@
 // ============================================================================
 // Source : STRATEGY.md v2.7 Section 4 Bloc 6 + Section 8 Couche 3
 //
-// Rôle : soumet l'ordre BUY (ou SELL) sur Alpaca paper avec bracket order
-// (stop-loss + take-profit attachés natifs Alpaca = Couche 3 protection).
-//
-// Pré-requis :
-//   - signal.action = BUY (V1 long-only) OR SELL pour fermer position
-//   - signal.reviewer_verdict = APPROVE
-//   - signal.code_validation = APPROVED
-//
-// Ordre passé :
-//   BUY  → limit order @ current ± 0.2% + stop-loss + take-profit (bracket)
-//   SELL → market order (close position immediately)
-//
-// Met à jour :
-//   - signals.alpaca_order_id, signals.executed = true
-//   - INSERT public.positions (status='OPEN') si BUY
-//   - UPDATE public.positions (status='CLOSED', exit_*) si SELL
+// Audit 18/06 : bracket en time_in_force=day → les legs stop/TP EXPIRAIENT après
+// la séance → positions sans protection native (0 ordre ouvert observé). Fix :
+//   - entrée LIMIT marketable (+0.3%) + time_in_force=GTC → legs stop/TP PERSISTENT.
+//   - P3 : garde anti-doublon autoritaire (check positions Alpaca live avant envoi).
+//   - peak_price initialisé à l'entrée (pour trailing/give-back côté update-positions).
 // ============================================================================
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
@@ -44,10 +33,9 @@ async function alpacaRequest<T>(method: string, path: string, body?: unknown): P
       },
       body: body ? JSON.stringify(body) : undefined,
     });
-    if (!r.ok) {
-      return { ok: false, status: r.status, error: (await r.text()).slice(0, 500) };
-    }
-    return { ok: true, status: r.status, data: await r.json() as T };
+    if (!r.ok) return { ok: false, status: r.status, error: (await r.text()).slice(0, 500) };
+    const text = await r.text();
+    return { ok: true, status: r.status, data: text ? JSON.parse(text) as T : undefined };
   } catch (e) {
     return { ok: false, error: String((e as Error).message ?? e) };
   }
@@ -70,9 +58,13 @@ async function getAlpacaClock(): Promise<{ is_open: boolean; next_open?: string 
   return r.data;
 }
 
-// Audit fix (S4) : prix de référence temps réel via FMP. L'entry_price_target du
-// Trader date de l'analyse (pré-marché, ~3h avant l'exécution). On recalcule
-// sizing + SL/TP sur le prix courant pour garantir un bracket valide.
+// P3 — garde autoritaire : Alpaca est la source de vérité. Si on détient déjà le
+// titre (même si la DB diverge), on n'ouvre pas un doublon. 404 = pas de position.
+async function alpacaHasPosition(ticker: string): Promise<boolean> {
+  const r = await alpacaRequest<{ symbol: string }>("GET", `/v2/positions/${ticker}`);
+  return r.ok && !!r.data;
+}
+
 async function getCurrentPrice(ticker: string): Promise<number | null> {
   const fmpKey = Deno.env.get("FMP_API_KEY");
   if (!fmpKey) return null;
@@ -127,6 +119,11 @@ Deno.serve(async (req: Request) => {
   if (sig.reviewer_verdict !== "APPROVE") return jsonResponse({ ok: false, error: "reviewer_did_not_approve", reviewer_verdict: sig.reviewer_verdict }, 403);
   if (sig.code_validation !== "APPROVED") return jsonResponse({ ok: false, error: "code_validation_not_passed", code_validation: sig.code_validation }, 403);
 
+  // --- P3 : garde anti-doublon Alpaca (autoritaire) ---
+  if (sig.action === "BUY" && !dry_run && await alpacaHasPosition(sig.ticker)) {
+    return jsonResponse({ ok: false, error: "already_open_on_alpaca", ticker: sig.ticker, hint: "Position déjà détenue côté Alpaca — pas de doublon." }, 200);
+  }
+
   // --- Get Alpaca account state ---
   const account = await getAlpacaAccount();
   if (!account.ok) return jsonResponse({ ok: false, error: "alpaca_account_fetch_failed", detail: account.error }, 502);
@@ -143,16 +140,14 @@ Deno.serve(async (req: Request) => {
   const takeProfitPct = sig.take_profit_pct as number;
   const entryTarget = (sig.entry_price_target as number) ?? 0;
 
-  // Audit fix (S4) : prix de référence = quote temps réel, fallback entry_price_target.
   const refPrice = (await getCurrentPrice(sig.ticker)) ?? entryTarget;
   if (!refPrice || refPrice <= 0) {
     return jsonResponse({ ok: false, error: "no_reference_price", ticker: sig.ticker, entry_target: entryTarget }, 502);
   }
 
   const positionUsd = (account.portfolio_value ?? 0) * (positionSizePct / 100);
-  // Audit fix (Bloquant 2) : qty en actions ENTIÈRES. Alpaca rejette (422) tout ordre
-  // notional/fractionnel combiné à un bracket order. On arrondit au plancher.
   const qty = Math.floor(positionUsd / refPrice);
+  const limitPrice = refPrice * 1.003;          // marketable limit (+0.3%) → fill immédiat, cap le slippage
   const stopLossPrice = refPrice * (1 - stopLossPct / 100);
   const takeProfitPrice = refPrice * (1 + takeProfitPct / 100);
 
@@ -164,19 +159,20 @@ Deno.serve(async (req: Request) => {
     }, 200);
   }
 
-  // --- Submit bracket order ---
+  // --- Submit bracket order (GTC → les legs stop/TP PERSISTENT, ne expirent plus) ---
   const orderPayload = sig.action === "BUY" ? {
     symbol: sig.ticker,
     qty: String(qty),
     side: "buy",
-    type: "market",  // V1 simple market entry; STRATEGY.md says limit +0.2% but market is simpler
-    time_in_force: "day",
+    type: "limit",
+    limit_price: limitPrice.toFixed(2),
+    time_in_force: "gtc",
     order_class: "bracket",
     stop_loss: { stop_price: stopLossPrice.toFixed(2) },
     take_profit: { limit_price: takeProfitPrice.toFixed(2) },
   } : {
     symbol: sig.ticker,
-    qty: "1",  // For SELL we'd need to know current qty — simplified V1
+    qty: "1",
     side: "sell",
     type: "market",
     time_in_force: "day",
@@ -191,14 +187,13 @@ Deno.serve(async (req: Request) => {
       would_submit: orderPayload,
       account: { cash: account.cash, portfolio_value: account.portfolio_value, buying_power: account.buying_power },
       market_open: clock.is_open,
-      computed: { ref_price: refPrice, qty, positionUsd: positionUsd.toFixed(2), stopLossPrice: stopLossPrice.toFixed(2), takeProfitPrice: takeProfitPrice.toFixed(2) },
+      computed: { ref_price: refPrice, qty, limit_price: limitPrice.toFixed(2), positionUsd: positionUsd.toFixed(2), stopLossPrice: stopLossPrice.toFixed(2), takeProfitPrice: takeProfitPrice.toFixed(2) },
       duration_ms: Date.now() - t0,
     }, 200);
   }
 
   const orderResp = await alpacaRequest<{ id: string; symbol: string; filled_avg_price: string | null; qty: string | null; status: string }>("POST", "/v2/orders", orderPayload);
   if (!orderResp.ok) {
-    // Log to signals
     await supabase.from("signals").update({
       code_validation: `${sig.code_validation} → ALPACA_REJECTED: ${orderResp.error?.slice(0, 200)}`,
     }).eq("id", signalId);
@@ -213,14 +208,12 @@ Deno.serve(async (req: Request) => {
 
   const order = orderResp.data!;
 
-  // --- Update signal as executed (Audit fix Bloquant 3 : capture l'erreur) ---
   const { error: sigUpErr } = await supabase.from("signals").update({
     executed: true,
     alpaca_order_id: order.id,
   }).eq("id", signalId);
   if (sigUpErr) console.error("signals executed update failed:", sigUpErr);
 
-  // --- For BUY : create positions row (status='OPEN') ---
   let positionId: string | null = null;
   if (sig.action === "BUY") {
     const filledPrice = order.filled_avg_price ? parseFloat(order.filled_avg_price) : refPrice;
@@ -233,6 +226,7 @@ Deno.serve(async (req: Request) => {
       position_size_usd: filledPrice * filledQty,
       stop_loss_price: stopLossPrice,
       take_profit_price: takeProfitPrice,
+      peak_price: filledPrice,
       alpaca_order_id: order.id,
       status: "OPEN",
     }).select("id").single();
@@ -252,6 +246,8 @@ Deno.serve(async (req: Request) => {
     sized: {
       position_size_pct: positionSizePct,
       position_usd: positionUsd,
+      ref_price: refPrice,
+      qty,
       stop_loss_price: stopLossPrice,
       take_profit_price: takeProfitPrice,
     },
