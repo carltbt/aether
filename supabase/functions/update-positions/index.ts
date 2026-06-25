@@ -27,7 +27,9 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, type SupabaseClient } from "jsr:@supabase/supabase-js@2";
 
-const MAX_HOLD_DAYS = 10;          // était 21 — réduit (demi-vie PEAD 6-7j)
+// AUDIT 2026-06-23 : timeout en JOURS DE BOURSE (pas calendaires). 8 td ≈ demi-vie
+// PEAD (Sidhu et al. P6 : IC J1=0.119 → J10=0.065). Avant: 10 "jours" ambigus.
+const MAX_HOLD_TRADING_DAYS = 8;
 const GIVEBACK_MIN_PEAK_PCT = 5;   // give-back ne s'active qu'au-delà de +5% de pic
 const GIVEBACK_FRACTION = 0.5;     // sortie si on retombe sous 50% du pic de gain
 
@@ -55,6 +57,20 @@ interface Event {
 
 function jsonResponse(b: unknown, s: number) {
   return new Response(JSON.stringify(b, null, 2), { status: s, headers: { "Content-Type": "application/json" } });
+}
+
+// Jours de bourse (Lun-Ven) entre deux instants — ignore les fériés (sur-compte de
+// ~1 sur une fenêtre de détention, acceptable).
+function tradingDaysBetween(startMs: number, endMs: number): number {
+  let count = 0;
+  const d = new Date(startMs); d.setUTCHours(0, 0, 0, 0);
+  const end = new Date(endMs); end.setUTCHours(0, 0, 0, 0);
+  while (d < end) {
+    d.setUTCDate(d.getUTCDate() + 1);
+    const dow = d.getUTCDay();
+    if (dow >= 1 && dow <= 5) count++;
+  }
+  return count;
 }
 
 // --- Alpaca helpers --------------------------------------------------------
@@ -108,13 +124,18 @@ async function cancelOrdersForSymbol(openOrders: AlpacaOrder[], ticker: string):
 
 // --- Price (FMP) ------------------------------------------------------------
 
-async function getCurrentPrice(ticker: string, fmpKey: string): Promise<number | null> {
+// AUDIT 2026-06-23 : on lit aussi dayHigh (deja dans la reponse FMP, 0 appel en plus)
+// pour alimenter le peak tracking → reactive le give-back (auparavant inerte car le
+// peak ne montait jamais au-dessus de l'entree).
+async function getCurrentPrice(ticker: string, fmpKey: string): Promise<{ price: number; dayHigh: number } | null> {
   try {
     const r = await fetch(`https://financialmodelingprep.com/stable/quote?symbol=${ticker}&apikey=${fmpKey}`);
     if (!r.ok) return null;
     const data = await r.json();
-    if (!Array.isArray(data) || data.length === 0) return null;
-    return data[0].price ?? null;
+    if (!Array.isArray(data) || data.length === 0 || typeof data[0].price !== "number") return null;
+    const price = data[0].price as number;
+    const dayHigh = typeof data[0].dayHigh === "number" ? data[0].dayHigh as number : price;
+    return { price, dayHigh };
   } catch {
     return null;
   }
@@ -151,40 +172,42 @@ function computeTrailedStopPct(returnPct: number): number | null {
   return null;
 }
 
-// --- Sell at market (cancel legs first) ---
+async function closeDb(supabase: SupabaseClient, pos: PositionRow, currentPrice: number, reason: string) {
+  const pnl_usd = (currentPrice - pos.entry_price) * pos.quantity;
+  const pnl_pct = ((currentPrice - pos.entry_price) / pos.entry_price) * 100;
+  const holdDays = tradingDaysBetween(Date.parse(pos.opened_at), Date.now());
+  const { error: upErr } = await supabase.from("positions").update({
+    status: "CLOSED", exit_price: currentPrice, closed_at: new Date().toISOString(),
+    exit_reason: reason, pnl_usd, pnl_pct, hold_days: holdDays,
+  }).eq("id", pos.id);
+  if (upErr) console.error(`positions CLOSED update failed for ${pos.id}:`, upErr);
+  if (pos.signal_id) await supabase.from("signals").update({ executed: true }).eq("id", pos.signal_id);
+}
+
+// AUDIT 25/06 : ne JAMAIS survendre. Le bracket GTC peut avoir déjà clôturé la
+// position (TP/stop filled) avant ce check → on lit la qty RÉELLE Alpaca. Si 0,
+// on réconcilie la DB sans nouvel ordre (sinon vente en double → SHORT, cf KBH).
 async function sellAtMarket(
   supabase: SupabaseClient, pos: PositionRow, currentPrice: number, exitReason: string, openOrders: AlpacaOrder[],
-): Promise<{ ok: boolean; error?: string; canceled: number }> {
+): Promise<{ ok: boolean; error?: string; canceled: number; reconciled?: boolean }> {
+  const real = await alpacaRequest<{ qty: string }>("GET", `/v2/positions/${pos.ticker}`);
+  const realQty = real.ok && real.data ? Math.abs(parseFloat(real.data.qty)) : 0;
   const canceled = await cancelOrdersForSymbol(openOrders, pos.ticker);
 
+  if (realQty < 1) {
+    await closeDb(supabase, pos, currentPrice, `${exitReason}_reconciled`);
+    return { ok: true, canceled, reconciled: true };
+  }
+
+  const sellQty = Math.min(realQty, pos.quantity);  // jamais plus que ce qu'on détient
   const orderResp = await alpacaRequest<{ id: string; status: string }>("POST", "/v2/orders", {
-    symbol: pos.ticker,
-    qty: String(pos.quantity),
-    side: "sell",
-    type: "market",
-    time_in_force: "day",
+    symbol: pos.ticker, qty: String(sellQty), side: "sell", type: "market", time_in_force: "day",
   });
   if (!orderResp.ok) {
     console.error(`Alpaca sell failed for ${pos.ticker}:`, orderResp.error);
     return { ok: false, error: orderResp.error, canceled };
   }
-
-  const pnl_usd = (currentPrice - pos.entry_price) * pos.quantity;
-  const pnl_pct = ((currentPrice - pos.entry_price) / pos.entry_price) * 100;
-  const holdDays = Math.round((Date.now() - Date.parse(pos.opened_at)) / (86400 * 1000));
-
-  const { error: upErr } = await supabase.from("positions").update({
-    status: "CLOSED",
-    exit_price: currentPrice,
-    closed_at: new Date().toISOString(),
-    exit_reason: exitReason,
-    pnl_usd, pnl_pct, hold_days: holdDays,
-  }).eq("id", pos.id);
-  if (upErr) console.error(`positions CLOSED update failed for ${pos.id}:`, upErr);
-
-  if (pos.signal_id) {
-    await supabase.from("signals").update({ executed: true }).eq("id", pos.signal_id);
-  }
+  await closeDb(supabase, pos, currentPrice, exitReason);
   return { ok: true, canceled };
 }
 
@@ -213,18 +236,19 @@ Deno.serve(async () => {
       events.push({ ticker: pos.ticker, position_id: pos.id, rule: "skipped_incomplete_data", detail: {} });
       continue;
     }
-    const currentPrice = await getCurrentPrice(pos.ticker, fmpKey);
-    if (currentPrice === null) {
+    const quote = await getCurrentPrice(pos.ticker, fmpKey);
+    if (quote === null) {
       events.push({ ticker: pos.ticker, position_id: pos.id, rule: "skipped_no_price", detail: {} });
       continue;
     }
+    const currentPrice = quote.price;
 
     const returnPct = ((currentPrice - pos.entry_price) / pos.entry_price) * 100;
     const ordersForSym = openOrders.filter(o => o.symbol === pos.ticker).length;
 
-    // --- Suivi du peak ---
+    // --- Suivi du peak (inclut dayHigh → give-back enfin actif) ---
     const prevPeak = pos.peak_price ?? pos.entry_price;
-    const newPeak = Math.max(prevPeak, currentPrice);
+    const newPeak = Math.max(prevPeak, currentPrice, quote.dayHigh);
     if (newPeak > prevPeak) {
       await supabase.from("positions").update({ peak_price: newPeak }).eq("id", pos.id);
     }
@@ -285,17 +309,18 @@ Deno.serve(async () => {
       }
     }
 
-    // === 5. Hold ≥ 10j → exit ===
-    const holdDays = Math.round((Date.now() - Date.parse(pos.opened_at)) / (86400 * 1000));
-    if (holdDays >= MAX_HOLD_DAYS) {
+    // === 5. Hold ≥ 8 jours de BOURSE → exit (PEAD expiré) ===
+    const tradingDays = tradingDaysBetween(Date.parse(pos.opened_at), Date.now());
+    const calDays = Math.round((Date.now() - Date.parse(pos.opened_at)) / (86400 * 1000));
+    if (tradingDays >= MAX_HOLD_TRADING_DAYS) {
       if (marketOpen) {
-        const s = await sellAtMarket(supabase, pos, currentPrice, "timeout_10d", openOrders);
-        events.push({ ticker: pos.ticker, position_id: pos.id, rule: "duration_timeout_exit", detail: { hold_days: holdDays, returnPct: +returnPct.toFixed(2), sell_ok: s.ok } });
+        const s = await sellAtMarket(supabase, pos, currentPrice, "timeout_8td", openOrders);
+        events.push({ ticker: pos.ticker, position_id: pos.id, rule: "duration_timeout_exit", detail: { trading_days: tradingDays, cal_days: calDays, returnPct: +returnPct.toFixed(2), sell_ok: s.ok } });
       } else {
-        events.push({ ticker: pos.ticker, position_id: pos.id, rule: "duration_timeout_pending_market_closed", detail: { hold_days: holdDays } });
+        events.push({ ticker: pos.ticker, position_id: pos.id, rule: "duration_timeout_pending_market_closed", detail: { trading_days: tradingDays, cal_days: calDays } });
       }
     } else if (events.findIndex(e => e.position_id === pos.id) === -1) {
-      events.push({ ticker: pos.ticker, position_id: pos.id, rule: "held_no_action", detail: { returnPct: +returnPct.toFixed(2), peakReturnPct: +peakReturnPct.toFixed(2), currentPrice, stop: pos.stop_loss_price, hold_days: holdDays, alpaca_open_orders: ordersForSym } });
+      events.push({ ticker: pos.ticker, position_id: pos.id, rule: "held_no_action", detail: { returnPct: +returnPct.toFixed(2), peakReturnPct: +peakReturnPct.toFixed(2), currentPrice, stop: pos.stop_loss_price, trading_days: tradingDays, alpaca_open_orders: ordersForSym } });
     }
   }
 

@@ -84,3 +84,24 @@ Protéger le capital prime sur la fidélité à la spec V1. Les seuils de STRATE
 Sur 4 semaines : si le profit factor passe > 1.3 ET le give-back médian (gain rendu) < 30% → la nouvelle logique tient. Sinon, recalibrer les seuils (give-back 50%→40%, hold 10→7j). Mesurer aussi le taux de SELL de review-positions (si > 50% des revues = SELL → prompt trop agressif, churn).
 
 ---
+
+## D-003 — Hardening post-audit multi-agents (25/06)
+
+**Date** : 2026-06-25
+**Statut** : Actif
+**Sections impactées** : 5 (scoring), 8 (sortie/risque), 9 (strategy loop)
+
+Suite à l'audit multi-agents (26 agents, vérif DB live), batch de correctifs de **fiabilité/correctness** (pas de changement de thèse stratégique) :
+
+- **Auto-tuner désarmé** : `run-strategy-loop` en `SHADOW_MODE` — Claude propose des poids mais on n'applique JAMAIS (les poids actifs restent DEFAULT). Plancher `MIN_TRADES_FOR_ADJUSTMENT` 8 → 30. Motif : sur ~5-8 trades, l'IC est du bruit (r≈0.7 pour p<0.05 à n=8) ; `calculate-scores` lit ces poids en live → risque de dérive. Réarmer seulement après backtest + échantillon significatif.
+- **Timeout en jours de BOURSE** : `MAX_HOLD_TRADING_DAYS=8` (avant : 10 "jours" calendaires ambigus → sorties réelles à 13-18j).
+- **Peak tracking réparé** : `getCurrentPrice` lit `dayHigh` → `peak_price` monte enfin → la règle give-back (inerte jusque-là) est active.
+- **Cap dur** `MAX_CONCURRENT_POSITIONS=10` dans validate-order.
+- **No-oversell (incident KBH)** : le bracket GTC peut clôturer une position (TP/stop filled) avant le check manuel d'`update-positions`/`review-positions` → la vente manuelle créait un SHORT (KBH -83). Fix : lire la qty RÉELLE Alpaca avant toute vente ; si 0, réconcilier la DB sans ordre ; sinon vendre `min(qtyRéelle, qtyDB)`.
+- **Observabilité** : heartbeats START/END dans run-daily-analysis + `ops-watchdog` (cron 16:45 UTC) qui alerte Discord si une fonction du jour n'a pas tourné, s'il reste des orphelins >24h, ou si des positions Alpaca n'ont aucun ordre de protection.
+- **État EXPIRED** pour les orphelins BUY/PENDING >24h (reaping).
+
+### Critère de réévaluation
+Réarmer l'auto-tuner uniquement après backtest + ≥30 trades. Affiner `MAX_HOLD_TRADING_DAYS`, give-back et le cap N sur la grille de sensibilité du backtest.
+
+---

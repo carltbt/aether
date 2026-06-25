@@ -72,12 +72,7 @@ interface PositionRow {
   entry_price: number; quantity: number; peak_price: number | null;
 }
 
-async function sellAtMarket(supabase: SupabaseClient, pos: PositionRow, currentPrice: number, reason: string): Promise<{ ok: boolean; error?: string; canceled: number }> {
-  const canceled = await cancelOrdersForSymbol(pos.ticker);
-  const o = await alpacaRequest<{ id: string }>("POST", "/v2/orders", {
-    symbol: pos.ticker, qty: String(pos.quantity), side: "sell", type: "market", time_in_force: "day",
-  });
-  if (!o.ok) return { ok: false, error: o.error, canceled };
+async function closeDb(supabase: SupabaseClient, pos: PositionRow, currentPrice: number, reason: string) {
   const pnl_usd = (currentPrice - pos.entry_price) * pos.quantity;
   const pnl_pct = ((currentPrice - pos.entry_price) / pos.entry_price) * 100;
   const holdDays = Math.round((Date.now() - Date.parse(pos.opened_at)) / 86400000);
@@ -86,6 +81,24 @@ async function sellAtMarket(supabase: SupabaseClient, pos: PositionRow, currentP
     exit_reason: reason, pnl_usd, pnl_pct, hold_days: holdDays,
   }).eq("id", pos.id);
   if (pos.signal_id) await supabase.from("signals").update({ executed: true }).eq("id", pos.signal_id);
+}
+
+// AUDIT 25/06 : ne jamais survendre — lit la qty réelle Alpaca ; si le bracket a
+// déjà fermé la position, réconcilie la DB sans nouvel ordre (cf incident KBH).
+async function sellAtMarket(supabase: SupabaseClient, pos: PositionRow, currentPrice: number, reason: string): Promise<{ ok: boolean; error?: string; canceled: number; reconciled?: boolean }> {
+  const real = await alpacaRequest<{ qty: string }>("GET", `/v2/positions/${pos.ticker}`);
+  const realQty = real.ok && real.data ? Math.abs(parseFloat(real.data.qty)) : 0;
+  const canceled = await cancelOrdersForSymbol(pos.ticker);
+  if (realQty < 1) {
+    await closeDb(supabase, pos, currentPrice, `${reason}_reconciled`);
+    return { ok: true, canceled, reconciled: true };
+  }
+  const sellQty = Math.min(realQty, pos.quantity);
+  const o = await alpacaRequest<{ id: string }>("POST", "/v2/orders", {
+    symbol: pos.ticker, qty: String(sellQty), side: "sell", type: "market", time_in_force: "day",
+  });
+  if (!o.ok) return { ok: false, error: o.error, canceled };
+  await closeDb(supabase, pos, currentPrice, reason);
   return { ok: true, canceled };
 }
 

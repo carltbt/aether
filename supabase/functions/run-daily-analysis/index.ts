@@ -150,6 +150,16 @@ Deno.serve(async (req: Request) => {
 
   const topCandidates = cand.candidates.slice(0, limit) as Candidate[];
 
+  // AUDIT 23/06 : heartbeat de DÉBUT — garantit une trace même si la fonction
+  // timeout avant la fin (le heartbeat final n'était parfois jamais écrit →
+  // monitoring aveugle). Le watchdog s'appuie dessus pour confirmer le run.
+  await supabase.from("system_heartbeats").insert({
+    status: "ok",
+    cycles_completed: 0,
+    stocks_analyzed: topCandidates.length,
+    notes: `run-daily-analysis ${dryRun ? "DRY_RUN" : "LIVE"} START | candidates=${topCandidates.length}`,
+  });
+
   // === 2. SEQUENTIAL BATCHING (P-021 fix) ===
   // Batch of BATCH_SIZE in parallel, then await before next batch.
   // Avoids saturating Anthropic rate limits (50 RPM standard tier).
@@ -194,7 +204,7 @@ Deno.serve(async (req: Request) => {
 
   // === 4. Heartbeat ===
   const status: "ok" | "partial_error" = errors.length === 0 ? "ok" : "partial_error";
-  const { data: hb } = await supabase.from("system_heartbeats").insert({
+  const { data: hb, error: hbErr } = await supabase.from("system_heartbeats").insert({
     status,
     cycles_completed: 1,
     stocks_analyzed: allResults.length,
@@ -202,8 +212,9 @@ Deno.serve(async (req: Request) => {
     errors: errors.length > 0 ? errors.map(e => ({
       ticker: e.ticker, step: e.step ?? "?", error: e.error ?? "?",
     })) : null,
-    notes: `run-daily-analysis ${dryRun ? "DRY_RUN" : "LIVE"} | batches=${batchCount}×${BATCH_SIZE} | analyzed=${allResults.length}/${topCandidates.length} | decisions=${JSON.stringify(decisions)}`,
+    notes: `run-daily-analysis ${dryRun ? "DRY_RUN" : "LIVE"} END | batches=${batchCount}×${BATCH_SIZE} | analyzed=${allResults.length}/${topCandidates.length} | decisions=${JSON.stringify(decisions)}`,
   }).select("id").single();
+  if (hbErr) console.error("run-daily-analysis END heartbeat insert failed:", hbErr);
 
   return jsonResponse({
     ok: errors.length === 0,

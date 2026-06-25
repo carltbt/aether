@@ -136,6 +136,9 @@ async function getDaysUntilNextEarnings(ticker: string, fmpKey: string): Promise
   }
 }
 
+// Cap dur du nombre de positions simultanées (STRATEGY.md Section 8 / P8).
+const MAX_CONCURRENT_POSITIONS = 10;
+
 function validate(decision: {
   ticker: string;
   action: string;
@@ -168,6 +171,11 @@ function validate(decision: {
   if (context.alreadyHoldingTicker) {
     reject_reasons.push(`already_open_position_in_${decision.ticker}`);
   } else checks_passed.push("no_duplicate_ticker");
+
+  // 0bis. Cap dur du nombre de positions simultanées (backstop portfolio heat)
+  if (context.openPositions.length >= MAX_CONCURRENT_POSITIONS) {
+    reject_reasons.push(`max_concurrent_positions_${context.openPositions.length}_cap_${MAX_CONCURRENT_POSITIONS}`);
+  } else checks_passed.push(`positions_count_${context.openPositions.length}_ok`);
 
   // 1. Ticker anchoring (P13) — detect confusion
   if (decision.ticker !== context.requestedTicker) {

@@ -21,7 +21,13 @@ const COST_INPUT_PER_M = 3.0;
 const COST_OUTPUT_PER_M = 15.0;
 
 // Cold start gates (STRATEGY.md Section 8.5)
-const MIN_TRADES_FOR_ADJUSTMENT = 8;
+// AUDIT 2026-06-23 — auto-tuner DÉSARMÉ : sur ~5-30 trades, l'IC proxy (corr
+// Pearson score↔pnl) est du bruit pur (il faut r≈0.7 pour p<0.05 à n=8). Tant
+// qu'on n'a pas d'échantillon significatif + un backtest, Claude PROPOSE mais on
+// n'APPLIQUE JAMAIS ses poids (SHADOW_MODE) — les poids actifs restent DEFAULT.
+// Réévaluer après le backtest (cf DEVIATIONS.md). Plancher relevé 8 → 30.
+const SHADOW_MODE = true;
+const MIN_TRADES_FOR_ADJUSTMENT = 30;
 const MIN_WEEKS_FOR_ADJUSTMENT = 3;
 
 // Default weights (STRATEGY.md Section 5)
@@ -255,16 +261,24 @@ Respond ONLY with this JSON shape:
   }
 
   // 6. INSERT new strategy
+  // SHADOW_MODE : on n'APPLIQUE PAS les poids proposés par Claude (échantillon non
+  // significatif + pas de backtest). On garde les poids précédents actifs et on
+  // archive la proposition en texte pour observation.
+  const appliedWeights = SHADOW_MODE ? prevWeights : newWeights;
   const { data: inserted, error: insErr } = await supabase
     .from("strategies")
     .insert({
       week_number: nextWeek,
-      cluster_weights: newWeights,
+      cluster_weights: appliedWeights,
       preferred_strategies: claudeResp.parsed?.preferred_strategies ?? null,
       sector_bias: claudeResp.parsed?.sector_bias ?? null,
       risk_adjustment: claudeResp.parsed?.risk_adjustment ?? 1.0,
-      strategy_text: claudeResp.parsed?.strategy_text ?? null,
-      rationale: claudeResp.parsed?.rationale ?? null,
+      strategy_text: SHADOW_MODE
+        ? `[SHADOW — poids NON appliqués] ${claudeResp.parsed?.strategy_text ?? ""} || Proposition Claude IGNORÉE: ${JSON.stringify(newWeights)} (n=${closedCount} trades, IC=bruit, pas de backtest).`
+        : (claudeResp.parsed?.strategy_text ?? null),
+      rationale: SHADOW_MODE
+        ? `SHADOW_MODE actif : poids actifs inchangés (${JSON.stringify(prevWeights)}). ${claudeResp.parsed?.rationale ?? ""}`
+        : (claudeResp.parsed?.rationale ?? null),
     })
     .select("id, week_number")
     .single();
@@ -282,11 +296,13 @@ Respond ONLY with this JSON shape:
 
   return jsonResponse({
     ok: true,
-    mode: "adjustment_applied",
+    mode: SHADOW_MODE ? "shadow_proposal_only" : "adjustment_applied",
+    shadow_mode: SHADOW_MODE,
     week_number: nextWeek,
     strategy_id: inserted?.id,
     previous_weights: prevWeights,
-    new_weights: newWeights,
+    applied_weights: appliedWeights,
+    proposed_weights: newWeights,
     weights_sum: sum,
     regime: currentRegime,
     closed_trades: closedCount,
