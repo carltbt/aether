@@ -8,6 +8,7 @@ import { ShadowSection } from "@/components/shadow-section";
 import { PerfChart } from "@/components/perf-chart";
 import { PerformanceSection, type Snapshot } from "@/components/performance-section";
 import { ClosedPositionsSection, type ClosedPosition } from "@/components/closed-positions-section";
+import { Logo } from "@/components/logo";
 
 export const dynamic = "force-dynamic";
 
@@ -129,10 +130,9 @@ export default async function DashboardPage() {
       {/* Header */}
       <header className="border-b border-slate-200">
         <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="bg-brand-gradient text-white font-mono font-bold text-sm px-2.5 py-1 rounded">
-              AETHER
-            </div>
+          <div className="flex items-center gap-2.5">
+            <Logo size={26} />
+            <span className="font-mono font-bold text-sm tracking-tight text-slate-900">AETHER</span>
             <span className="text-xs text-slate-400">|</span>
             <span className="text-xs text-slate-500">admin dashboard</span>
           </div>
@@ -148,6 +148,7 @@ export default async function DashboardPage() {
                 last beat {relativeTime(heartbeat.recorded_at)}
               </span>
             )}
+            <Link href="/desk" className="text-xs text-slate-500 hover:text-slate-900 transition-colors">Trading Floor 3D →</Link>
             <Link href="/pipeline" className="text-xs text-slate-500 hover:text-slate-900 transition-colors">Pipeline LLM →</Link>
             <LogoutButton />
           </div>
