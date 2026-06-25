@@ -1,9 +1,9 @@
-import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase-admin";
 import { LogoutButton } from "@/components/logout-button";
 import { PipelineMindmap, type PipelineStats } from "@/components/pipeline-mindmap";
 import { ExchangesFeed, type ExchangeLog } from "@/components/exchanges-feed";
 import { Logo } from "@/components/logo";
+import { NavPill } from "@/components/nav-pill";
 
 export const dynamic = "force-dynamic";
 
@@ -45,8 +45,9 @@ export default async function PipelinePage() {
             <span className="text-xs text-slate-500">pipeline LLM</span>
           </div>
           <div className="flex items-center gap-4">
-            <Link href="/" className="text-xs text-slate-500 hover:text-slate-900 transition-colors">← Dashboard</Link>
-            <Link href="/desk" className="text-xs text-slate-500 hover:text-slate-900 transition-colors">Trading Floor 3D</Link>
+            <NavPill href="/">Dashboard</NavPill>
+            <NavPill href="/desk">Trading Floor</NavPill>
+            <NavPill href="/pipeline" active>Pipeline</NavPill>
             <LogoutButton />
           </div>
         </div>

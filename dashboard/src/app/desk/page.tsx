@@ -1,7 +1,7 @@
-import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase-admin";
 import { LogoutButton } from "@/components/logout-button";
 import { Logo } from "@/components/logo";
+import { NavPill } from "@/components/nav-pill";
 import { TradingDeskScene, type DeskStats } from "@/components/trading-desk-scene";
 
 export const dynamic = "force-dynamic";
@@ -31,11 +31,12 @@ export default async function DeskPage() {
             <Logo size={26} />
             <span className="font-mono font-bold text-sm tracking-tight text-slate-900">AETHER</span>
             <span className="text-xs text-slate-400">|</span>
-            <span className="text-xs text-slate-500">trading floor 3D</span>
+            <span className="text-xs text-slate-500">salle des agents</span>
           </div>
-          <div className="flex items-center gap-4">
-            <Link href="/" className="text-xs text-slate-500 hover:text-slate-900 transition-colors">← Dashboard</Link>
-            <Link href="/pipeline" className="text-xs text-slate-500 hover:text-slate-900 transition-colors">Pipeline</Link>
+          <div className="flex items-center gap-2">
+            <NavPill href="/">Dashboard</NavPill>
+            <NavPill href="/pipeline">Pipeline</NavPill>
+            <NavPill href="/desk" active>Trading Floor</NavPill>
             <LogoutButton />
           </div>
         </div>
@@ -44,7 +45,7 @@ export default async function DeskPage() {
       <div className="max-w-7xl mx-auto px-6 py-8">
         <TradingDeskScene stats={stats} />
         <p className="text-center text-xs text-slate-400 mt-4">
-          Chaque station = un agent du pipeline. Halo pulsé = agent actif. Les points bleus sont les décisions qui circulent : analystes → researchers Bull/Bear → Trader → Reviewer → exécution Alpaca.
+          Chaque PNJ est un agent du pipeline. Quand il bosse, il va à son <strong className="text-slate-500">bureau</strong> (écran allumé, badge « actif »). Quand il est en veille, il va <strong className="text-slate-500">dormir</strong> (« z z z »). Les agents les plus sollicités passent plus de temps au bureau.
         </p>
       </div>
     </main>

@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { createAdminClient } from "@/lib/supabase-admin";
 import { formatCurrency, formatNumber, relativeTime, cn } from "@/lib/utils";
 import { LogoutButton } from "@/components/logout-button";
@@ -9,6 +8,7 @@ import { PerfChart } from "@/components/perf-chart";
 import { PerformanceSection, type Snapshot } from "@/components/performance-section";
 import { ClosedPositionsSection, type ClosedPosition } from "@/components/closed-positions-section";
 import { Logo } from "@/components/logo";
+import { NavPill } from "@/components/nav-pill";
 
 export const dynamic = "force-dynamic";
 
@@ -148,8 +148,8 @@ export default async function DashboardPage() {
                 last beat {relativeTime(heartbeat.recorded_at)}
               </span>
             )}
-            <Link href="/desk" className="text-xs text-slate-500 hover:text-slate-900 transition-colors">Trading Floor 3D →</Link>
-            <Link href="/pipeline" className="text-xs text-slate-500 hover:text-slate-900 transition-colors">Pipeline LLM →</Link>
+            <NavPill href="/desk">Trading Floor</NavPill>
+            <NavPill href="/pipeline">Pipeline</NavPill>
             <LogoutButton />
           </div>
         </div>
