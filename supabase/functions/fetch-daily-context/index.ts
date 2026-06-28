@@ -47,11 +47,18 @@ async function fmpGet<T>(path: string, params: Record<string, string | number>, 
   }
 }
 
-function computeRegime(vix: number | null, spyVsSma50: "above" | "below" | "unknown"): "FREE" | "GUIDED" | "STRICT" | "PAUSE" {
-  if (typeof vix === "number" && vix > 35) return "PAUSE";
-  if (typeof vix === "number" && (vix > 25 || spyVsSma50 === "below")) return "STRICT";
-  if (typeof vix === "number" && vix < 18 && spyVsSma50 === "above") return "FREE";
-  return "GUIDED";  // VIX 18-25 OR insufficient data → safe default
+type Regime = "FREE" | "GUIDED" | "STRICT" | "PAUSE";
+// Hystérésis (diagnostic 26/06) : bande tampon ±1 pt VIX pour éviter le flip-flop
+// FREE↔GUIDED↔STRICT jour à jour (whiplash de sizing). Le seuil d'ENTRÉE dans un
+// régime est plus strict que celui de SORTIE.
+function computeRegime(vix: number | null, spyVsSma50: "above" | "below" | "unknown", prev: Regime | null): Regime {
+  if (typeof vix !== "number") return "GUIDED";
+  if (vix > 35) return "PAUSE";
+  const strictThresh = prev === "STRICT" ? 24 : 25;   // entrer >25, sortir <24
+  if (vix > strictThresh || spyVsSma50 === "below") return "STRICT";
+  const freeThresh = prev === "FREE" ? 18 : 17;        // entrer <17, rester <18
+  if (vix < freeThresh && spyVsSma50 === "above") return "FREE";
+  return "GUIDED";
 }
 
 function computeSma(closes: number[], period: number): number | null {
@@ -130,8 +137,13 @@ Deno.serve(async () => {
     raw.treasury = sorted[0];
   } else errors.treasury = treasuryR.error ?? "no_data";
 
-  // --- Compute regime ---
-  const regime = computeRegime(vix, spyVsSma50);
+  // --- Compute regime (avec hystérésis sur le régime de la veille) ---
+  const { data: prevCtx } = await supabase
+    .from("daily_context").select("market_regime")
+    .lt("context_date", isoToday())
+    .order("context_date", { ascending: false }).limit(1).maybeSingle();
+  const prevRegime = (prevCtx?.market_regime ?? null) as Regime | null;
+  const regime = computeRegime(vix, spyVsSma50, prevRegime);
 
   // --- Upsert daily_context (1 row par date) ---
   const today = isoToday();

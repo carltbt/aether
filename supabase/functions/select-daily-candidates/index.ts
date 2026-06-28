@@ -110,6 +110,14 @@ Deno.serve(async () => {
   const { data: openPosRows } = await supabase.from("positions").select("ticker").eq("status", "OPEN");
   const heldTickers = new Set((openPosRows ?? []).map((p) => p.ticker));
 
+  // Anti-churn (diagnostic 26/06) : cooldown sur les tickers récemment CLÔTURÉS
+  // (≤ 5 jours calendaires ≈ 3 séances). Évite la boucle achat→vente→rachat (cas
+  // KMX vendu par review-positions puis re-sélectionné le lendemain).
+  const { data: recentClosed } = await supabase
+    .from("positions").select("ticker, closed_at")
+    .eq("status", "CLOSED").gte("closed_at", new Date(Date.now() - 5 * 86400 * 1000).toISOString());
+  const cooldownTickers = new Set((recentClosed ?? []).map((p) => p.ticker));
+
   // === 2. Past analyses (last 14d) for rotation logic ===
   const historyCutoff = new Date(Date.now() - HISTORY_DAYS * 86400 * 1000).toISOString();
   const { data: pastSignals } = await supabase
@@ -273,13 +281,14 @@ Deno.serve(async () => {
   }
 
   // Combine eligible (catalyst) + momentum complement, MINUS les tickers détenus (P3)
-  const combined = [...eligible, ...momentumComplement].filter(c => !heldTickers.has(c.ticker));
+  const combined = [...eligible, ...momentumComplement].filter(c => !heldTickers.has(c.ticker) && !cooldownTickers.has(c.ticker));
   const top = combined.slice(0, MAX_CANDIDATES);
 
   // Counts for observability
   const counts = {
     total_in_catalyst_window: candidates.length,
     held_excluded: [...eligible, ...momentumComplement].filter(c => heldTickers.has(c.ticker)).length,
+    cooldown_excluded: [...eligible, ...momentumComplement].filter(c => !heldTickers.has(c.ticker) && cooldownTickers.has(c.ticker)).length,
     cooldown_skipped: candidates.filter(c => c.rotation_tier === "cooldown").length,
     winners_promoted: top.filter(c => c.rotation_tier === "winner").length,
     fresh_catalyst: top.filter(c => c.rotation_tier === "fresh" && c.earnings_date !== "N/A (momentum candidate)").length,
