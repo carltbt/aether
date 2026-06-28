@@ -11,17 +11,18 @@ interface Agent {
   model: "Haiku" | "Sonnet" | "Code";
   emoji: string;
   color: string;
+  task: string; // ce qu'il fait quand il bosse
 }
 
 const AGENTS: Agent[] = [
-  { key: "analysis_pass1", label: "Technique", model: "Haiku", emoji: "📈", color: "#8b5cf6" },
-  { key: "analysis_pass2", label: "Sentiment", model: "Haiku", emoji: "📰", color: "#a855f7" },
-  { key: "analysis_pass3", label: "Fondam.", model: "Sonnet", emoji: "🔬", color: "#3b82f6" },
-  { key: "researcher_bull", label: "Bull", model: "Sonnet", emoji: "🐂", color: "#10b981" },
-  { key: "researcher_bear", label: "Bear", model: "Sonnet", emoji: "🐻", color: "#ef4444" },
-  { key: "decision", label: "Trader", model: "Sonnet", emoji: "🧠", color: "#2563eb" },
-  { key: "reviewer", label: "Reviewer", model: "Sonnet", emoji: "⚖️", color: "#f59e0b" },
-  { key: "exec", label: "Alpaca", model: "Code", emoji: "⚡", color: "#0ea5e9" },
+  { key: "analysis_pass1", label: "Technique", model: "Haiku", emoji: "📈", color: "#8b5cf6", task: "lit RSI · MACD · ADX" },
+  { key: "analysis_pass2", label: "Sentiment", model: "Haiku", emoji: "📰", color: "#a855f7", task: "scanne les news" },
+  { key: "analysis_pass3", label: "Fondam.", model: "Sonnet", emoji: "🔬", color: "#3b82f6", task: "DCF & qualité" },
+  { key: "researcher_bull", label: "Bull", model: "Sonnet", emoji: "🐂", color: "#10b981", task: "bâtit la thèse haussière" },
+  { key: "researcher_bear", label: "Bear", model: "Sonnet", emoji: "🐻", color: "#ef4444", task: "cherche les risques" },
+  { key: "decision", label: "Trader", model: "Sonnet", emoji: "🧠", color: "#2563eb", task: "tranche BUY / HOLD" },
+  { key: "reviewer", label: "Reviewer", model: "Sonnet", emoji: "⚖️", color: "#f59e0b", task: "vérifie 3 perspectives" },
+  { key: "exec", label: "Alpaca", model: "Code", emoji: "⚡", color: "#0ea5e9", task: "passe l'ordre bracket" },
 ];
 
 // déphasages pour que la salle soit toujours en mouvement (mix bossent/dorment)
@@ -36,7 +37,7 @@ function variantFor(count: number): "a" | "b" | "c" {
 
 const MODEL_DOT: Record<string, string> = { Haiku: "#8b5cf6", Sonnet: "#3b82f6", Code: "#64748b" };
 
-export function TradingDeskScene({ stats }: { stats: DeskStats }) {
+export function TradingDeskScene({ stats, tickers = {} }: { stats: DeskStats; tickers?: Record<string, string> }) {
   const [hover, setHover] = useState<string | null>(null);
   const totalCalls = Object.values(stats).reduce((s, v) => s + v.count, 0);
   const workingNow = AGENTS.filter(a => variantFor(stats[a.key]?.count ?? 0) === "a").length;
@@ -59,6 +60,7 @@ export function TradingDeskScene({ stats }: { stats: DeskStats }) {
         {AGENTS.map((a, i) => {
           const st = stats[a.key];
           const v = variantFor(st?.count ?? 0);
+          const ticker = tickers[a.key] ?? "—";
           const style = {
             left: `${4 + i * 12}%`,
             "--accent": a.color,
@@ -69,9 +71,13 @@ export function TradingDeskScene({ stats }: { stats: DeskStats }) {
             <div key={a.key} className={`rm-cell rm-${v}`} style={style}
               onMouseEnter={() => setHover(a.key)} onMouseLeave={() => setHover(null)}>
 
-              {/* bureau */}
+              {/* bureau : l'écran affiche le ticker sur lequel l'agent bosse */}
               <div className="rm-desk">
-                <div className="rm-screen"><span className="rm-screenglow" /></div>
+                <div className="rm-screen">
+                  <span className="rm-screenglow" />
+                  <span className="rm-screen-tk">{ticker}</span>
+                  <span className="rm-screen-bars"><i /><i /><i /></span>
+                </div>
                 <div className="rm-deskglow" />
               </div>
 
@@ -82,7 +88,7 @@ export function TradingDeskScene({ stats }: { stats: DeskStats }) {
               <div className="rm-npc">
                 <div className="rm-shadow" />
                 <div className="rm-body"><span className="rm-emoji">{a.emoji}</span></div>
-                <div className="rm-badge">● actif</div>
+                <div className="rm-badge"><b>{ticker}</b><span>{a.task}</span></div>
                 <div className="rm-zzz"><span>z</span><span>z</span><span>z</span></div>
               </div>
 
@@ -155,10 +161,20 @@ const CSS = `
   animation-name: rm-pose; animation-duration: var(--dur); animation-delay: var(--delay);
   animation-timing-function: ease-in-out; animation-iteration-count: infinite; }
 .rm-emoji { font-size: 19px; line-height: 1; }
-.rm-badge { position: absolute; left: 50%; top: -34px; transform: translateX(-50%); white-space: nowrap;
-  font-size: 8.5px; font-weight: 800; letter-spacing: .04em; color: #fff; background: #10b981; padding: 2px 6px; border-radius: 999px;
-  box-shadow: 0 2px 6px -1px rgba(16,185,129,.6); opacity: 0;
+/* bulle "ce qu'il fait" quand il bosse */
+.rm-badge { position: absolute; left: 50%; top: -50px; transform: translateX(-50%); white-space: nowrap; text-align: center;
+  background: #0f172a; padding: 4px 9px; border-radius: 9px; opacity: 0;
+  box-shadow: 0 8px 18px -7px rgba(15,23,42,.6), 0 0 0 1px var(--accent);
   animation-name: rm-sigwork; animation-duration: var(--dur); animation-delay: var(--delay); animation-timing-function: ease-in-out; animation-iteration-count: infinite; }
+.rm-badge b { display: block; font-size: 11px; font-weight: 800; color: var(--accent); line-height: 1.1; }
+.rm-badge span { display: block; font-size: 8.5px; color: #cbd5e1; margin-top: 1px; }
+.rm-badge::after { content: ""; position: absolute; left: 50%; bottom: -3px; transform: translateX(-50%) rotate(45deg); width: 7px; height: 7px; background: #0f172a; }
+/* écran : ticker en cours + barres d'activité */
+.rm-screen-tk { position: absolute; top: 3px; left: 0; right: 0; text-align: center; font-family: monospace; font-weight: 800; font-size: 8px; letter-spacing: .04em; color: #93c5fd; z-index: 2; }
+.rm-screen-bars { position: absolute; bottom: 2px; left: 5px; right: 5px; height: 7px; display: flex; align-items: flex-end; gap: 2px; z-index: 1; opacity: .8; }
+.rm-screen-bars i { flex: 1; background: var(--accent); border-radius: 1px; height: 30%; animation: rm-bar 1.1s ease-in-out infinite; }
+.rm-screen-bars i:nth-child(2) { animation-delay: .2s; } .rm-screen-bars i:nth-child(3) { animation-delay: .4s; }
+@keyframes rm-bar { 0%,100%{ height: 25%; } 50%{ height: 88%; } }
 .rm-zzz { position: absolute; left: 50%; top: -30px; transform: translateX(-50%); display: flex; gap: 2px; opacity: 0;
   animation-name: rm-sigsleep; animation-duration: var(--dur); animation-delay: var(--delay); animation-timing-function: ease-in-out; animation-iteration-count: infinite; }
 .rm-zzz span { font-size: 11px; font-weight: 800; color: #94a3b8; animation: rm-zfloat 1.8s ease-in-out infinite; }

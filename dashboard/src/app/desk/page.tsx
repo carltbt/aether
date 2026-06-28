@@ -23,6 +23,19 @@ export default async function DeskPage() {
   // "exec" station = positions exécutées (proxy : pas un log_type LLM)
   stats["exec"] = stats["exec"] ?? { count: 0, cost: 0, avg_latency: 0 };
 
+  // Dernier ticker traité par chaque agent → "sur quoi ils bossent"
+  const { data: recentLogs } = await supabase
+    .from("agent_logs").select("log_type, ticker, created_at")
+    .not("ticker", "is", null)
+    .order("created_at", { ascending: false }).limit(300);
+  const tickers: Record<string, string> = {};
+  for (const r of recentLogs ?? []) {
+    const k = r.log_type as string; const t = r.ticker as string | null;
+    if (k && t && !tickers[k]) tickers[k] = t;
+  }
+  const { data: lastPos } = await supabase.from("positions").select("ticker").order("opened_at", { ascending: false }).limit(1).maybeSingle();
+  if (lastPos?.ticker) tickers["exec"] = lastPos.ticker as string;
+
   return (
     <main className="min-h-screen">
       <header className="border-b border-slate-200">
@@ -43,7 +56,7 @@ export default async function DeskPage() {
       </header>
 
       <div className="max-w-7xl mx-auto px-6 py-8">
-        <TradingDeskScene stats={stats} />
+        <TradingDeskScene stats={stats} tickers={tickers} />
         <p className="text-center text-xs text-slate-400 mt-4">
           Chaque PNJ est un agent du pipeline. Quand il bosse, il va à son <strong className="text-slate-500">bureau</strong> (écran allumé, badge « actif »). Quand il est en veille, il va <strong className="text-slate-500">dormir</strong> (« z z z »). Les agents les plus sollicités passent plus de temps au bureau.
         </p>
