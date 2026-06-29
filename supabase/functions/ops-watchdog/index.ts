@@ -86,6 +86,16 @@ Deno.serve(async () => {
     .lt("created_at", new Date(Date.now() - 24 * 3600 * 1000).toISOString());
   if ((orphanCount ?? 0) > 0) alerts.push(`🟠 ${orphanCount} orphelin(s) BUY/PENDING > 24h`);
 
+  // Fraîcheur du feature store (snapshot quotidien as-of). Le snapshot tourne à
+  // 22:00, après ce watchdog (16:45) → on vérifie qu'un snapshot existe dans les
+  // 4 derniers jours (couvre week-ends/fériés) ; sinon snapshot-features est KO.
+  const { data: snapRows } = await supabase
+    .from("feature_snapshots").select("snapshot_date")
+    .gte("snapshot_date", new Date(Date.now() - 4 * 86400 * 1000).toISOString().slice(0, 10))
+    .order("snapshot_date", { ascending: false }).limit(1);
+  const lastSnapshot = snapRows?.[0]?.snapshot_date ?? null;
+  if (!lastSnapshot) alerts.push("🟠 feature_snapshots : aucun snapshot depuis >4j (snapshot-features KO ?)");
+
   // 4. Bracket sanity (Alpaca) : positions ouvertes mais 0 ordre ouvert = stops absents
   const positions = await alpacaGet<Array<{ symbol: string }>>("/v2/positions");
   const orders = await alpacaGet<Array<{ id: string }>>("/v2/orders?status=open&limit=500");
@@ -99,7 +109,7 @@ Deno.serve(async () => {
 
   await supabase.from("system_heartbeats").insert({
     status, cycles_completed: 1, stocks_analyzed: 0,
-    notes: `ops-watchdog ${status} | analysis=${ranAnalysis} review=${ranReview} ctx=${hasContext} orphans=${orphanCount ?? "?"} pos=${posCount ?? "?"} orders=${ordCount ?? "?"}${alerts.length ? " | ALERTS: " + alerts.join(" ; ") : ""}`,
+    notes: `ops-watchdog ${status} | analysis=${ranAnalysis} review=${ranReview} ctx=${hasContext} orphans=${orphanCount ?? "?"} pos=${posCount ?? "?"} orders=${ordCount ?? "?"} snap=${lastSnapshot ?? "none"}${alerts.length ? " | ALERTS: " + alerts.join(" ; ") : ""}`,
   });
 
   if (alerts.length > 0) {
@@ -109,7 +119,7 @@ Deno.serve(async () => {
   return jsonResponse({
     ok: status === "ok",
     date: todayStr,
-    checks: { has_context: hasContext, ran_analysis: ranAnalysis, ran_review: ranReview, orphans_over_24h: orphanCount ?? null, alpaca_positions: posCount, alpaca_open_orders: ordCount },
+    checks: { has_context: hasContext, ran_analysis: ranAnalysis, ran_review: ranReview, orphans_over_24h: orphanCount ?? null, alpaca_positions: posCount, alpaca_open_orders: ordCount, last_snapshot: lastSnapshot },
     alerts,
     duration_ms: Date.now() - t0,
   }, 200);
