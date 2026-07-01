@@ -146,24 +146,42 @@ Respond ONLY with:
 
 async function callClaude(apiKey: string, user: string): Promise<{ ok: boolean; parsed?: Record<string, unknown>; usage?: { input_tokens?: number; output_tokens?: number }; cost: number; latency: number; error?: string }> {
   const t0 = Date.now();
-  try {
-    const r = await fetch(ANTHROPIC_URL, {
-      method: "POST",
-      headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-      body: JSON.stringify({ model: MODEL, max_tokens: 400, temperature: 0, system: SYSTEM, messages: [{ role: "user", content: user }] }),
-    });
-    const latency = Date.now() - t0;
-    if (!r.ok) return { ok: false, cost: 0, latency, error: `HTTP ${r.status}: ${(await r.text()).slice(0, 200)}` };
-    const data = await r.json();
-    const text = data.content?.find((b: { type: string }) => b.type === "text")?.text ?? "";
-    let parsed: Record<string, unknown> | undefined;
-    try { parsed = JSON.parse(text.replace(/^```json\s*|\s*```$/g, "").trim()); }
-    catch { const m = text.match(/\{[\s\S]*\}/); if (m) { try { parsed = JSON.parse(m[0]); } catch { /* */ } } }
-    const cost = ((data.usage?.input_tokens ?? 0) * COST_IN + (data.usage?.output_tokens ?? 0) * COST_OUT) / 1_000_000;
-    return { ok: true, parsed, usage: data.usage, cost, latency };
-  } catch (e) {
-    return { ok: false, cost: 0, latency: Date.now() - t0, error: String((e as Error).message ?? e) };
+  const MAX_RETRIES = 3;
+  let lastErr = "";
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const r = await fetch(ANTHROPIC_URL, {
+        method: "POST",
+        headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+        body: JSON.stringify({ model: MODEL, max_tokens: 400, temperature: 0, system: SYSTEM, messages: [{ role: "user", content: user }] }),
+      });
+      if (r.status === 429 || r.status >= 500) {
+        lastErr = `HTTP ${r.status}`;
+        if (attempt < MAX_RETRIES) {
+          const ra = parseFloat(r.headers.get("retry-after") ?? "");
+          const backoff = Number.isFinite(ra) ? Math.min(30000, ra * 1000) : Math.min(8000, 700 * 2 ** attempt) * (0.5 + Math.random());
+          await new Promise(res => setTimeout(res, backoff));
+          continue;
+        }
+        return { ok: false, cost: 0, latency: Date.now() - t0, error: `${lastErr}: ${(await r.text()).slice(0, 200)}` };
+      }
+      if (!r.ok) return { ok: false, cost: 0, latency: Date.now() - t0, error: `HTTP ${r.status}: ${(await r.text()).slice(0, 200)}` };
+      const data = await r.json();
+      const text = data.content?.find((b: { type: string }) => b.type === "text")?.text ?? "";
+      let parsed: Record<string, unknown> | undefined;
+      try { parsed = JSON.parse(text.replace(/^```json\s*|\s*```$/g, "").trim()); }
+      catch { const m = text.match(/\{[\s\S]*\}/); if (m) { try { parsed = JSON.parse(m[0]); } catch { /* */ } } }
+      const cost = ((data.usage?.input_tokens ?? 0) * COST_IN + (data.usage?.output_tokens ?? 0) * COST_OUT) / 1_000_000;
+      // Fail-closed : JSON illisible → ok:false (une position en revue reste HOLD par sécurité).
+      if (!parsed) return { ok: false, usage: data.usage, cost, latency: Date.now() - t0, error: "json_parse_failed" };
+      return { ok: true, parsed, usage: data.usage, cost, latency: Date.now() - t0 };
+    } catch (e) {
+      lastErr = String((e as Error).message ?? e);
+      if (attempt < MAX_RETRIES) { await new Promise(res => setTimeout(res, Math.min(8000, 700 * 2 ** attempt) * (0.5 + Math.random()))); continue; }
+      return { ok: false, cost: 0, latency: Date.now() - t0, error: lastErr };
+    }
   }
+  return { ok: false, cost: 0, latency: Date.now() - t0, error: lastErr || "unknown" };
 }
 
 Deno.serve(async (req: Request) => {

@@ -215,17 +215,19 @@ Deno.serve(async (req: Request) => {
 
   const order = orderResp.data!;
 
-  const { error: sigUpErr } = await supabase.from("signals").update({
-    executed: true,
-    alpaca_order_id: order.id,
-  }).eq("id", signalId);
-  if (sigUpErr) console.error("signals executed update failed:", sigUpErr);
+  // Persist — audit 01/07 : un échec d'écriture APRÈS un fill Alpaca était avalé (ok:true)
+  // → position live NON trackée par la logique de sortie DB (trailing/give-back/timeout).
+  // On retry 1× chaque write ; si ça échoue toujours → ok:false + needs_reconcile + trace
+  // (heartbeat partial_error que le watchdog remonte, + flag DB_ORPHAN_RISK sur le signal).
+  let sigUpErr = (await supabase.from("signals").update({ executed: true, alpaca_order_id: order.id }).eq("id", signalId)).error;
+  if (sigUpErr) sigUpErr = (await supabase.from("signals").update({ executed: true, alpaca_order_id: order.id }).eq("id", signalId)).error;
 
   let positionId: string | null = null;
+  let posErr: unknown = null;
   if (sig.action === "BUY") {
     const filledPrice = order.filled_avg_price ? parseFloat(order.filled_avg_price) : refPrice;
     const filledQty = order.qty ? parseFloat(order.qty) : qty;
-    const { data: pos, error: posErr } = await supabase.from("positions").insert({
+    const posRow = {
       ticker: sig.ticker,
       signal_id: signalId,
       entry_price: filledPrice,
@@ -236,9 +238,18 @@ Deno.serve(async (req: Request) => {
       peak_price: filledPrice,
       alpaca_order_id: order.id,
       status: "OPEN",
-    }).select("id").single();
-    if (posErr) console.error("positions insert failed:", posErr);
-    positionId = pos?.id ?? null;
+    };
+    let ins = await supabase.from("positions").insert(posRow).select("id").single();
+    if (ins.error) ins = await supabase.from("positions").insert(posRow).select("id").single();
+    posErr = ins.error;
+    positionId = ins.data?.id ?? null;
+  }
+
+  if (sigUpErr || posErr) {
+    await supabase.from("signals").update({ code_validation: `${sig.code_validation} → DB_ORPHAN_RISK` }).eq("id", signalId);
+    await supabase.from("system_heartbeats").insert({ status: "partial_error", cycles_completed: 0, stocks_analyzed: 0,
+      notes: `execute-order DB_ORPHAN_RISK | ${sig.ticker} | order=${order.id} | sigErr=${!!sigUpErr} posErr=${!!posErr}` });
+    return jsonResponse({ ok: false, error: "db_persist_failed_after_fill", ticker: sig.ticker, alpaca_order_id: order.id, needs_reconcile: true, position_id: positionId }, 502);
   }
 
   return jsonResponse({

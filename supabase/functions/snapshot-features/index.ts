@@ -94,7 +94,10 @@ Deno.serve(async (req: Request) => {
       const price = num(q?.price);
       const dcfVal = num(dcf?.dcf);
       const dcfPrice = num(dcf?.["Stock Price"]) ?? price;
-      const dcfUpside = (dcfVal !== null && dcfPrice && dcfPrice > 0) ? ((dcfVal - dcfPrice) / dcfPrice) * 100 : null;
+      // DCF sanitize (audit 01/07) : l'endpoint FMP renvoie ~1/3 de valeurs aberrantes
+      // (upside -533%..+1136%). On n'enregistre l'upside que si dcf > 0 et |upside| ≤ 100%.
+      const dcfUpsideRaw = (dcfVal !== null && dcfVal > 0 && dcfPrice && dcfPrice > 0) ? ((dcfVal - dcfPrice) / dcfPrice) * 100 : null;
+      const dcfUpside = (dcfUpsideRaw !== null && Math.abs(dcfUpsideRaw) <= 100) ? dcfUpsideRaw : null;
 
       rows.push({
         snapshot_date: today,

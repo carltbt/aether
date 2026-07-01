@@ -216,10 +216,11 @@ function validate(decision: {
   else if (sl > 15) reject_reasons.push(`stop_loss_too_wide_${sl}pct_max_15`);
   else checks_passed.push(`stop_loss_${sl}pct_ok`);
 
-  // 6. Risk/reward ratio ≥ 1:2
+  // 6. Risk/reward ratio ≥ 1:2 — REJECT (audit 01/07 : était un simple warning, donc
+  //    un TP < 2×SL passait quand même la Couche 2 ; RR est non-négociable par STRATEGY).
   const tp = decision.take_profit_pct ?? 0;
   if (sl > 0 && tp < sl * 2) {
-    warnings.push(`risk_reward_${(tp/sl).toFixed(2)}_below_2x_minimum`);
+    reject_reasons.push(`risk_reward_${(tp/sl).toFixed(2)}_below_2x_minimum`);
   } else if (sl > 0) checks_passed.push(`risk_reward_${(tp/sl).toFixed(2)}x`);
 
   // 7. Earnings in next 5 days = REJECT (binary event risk)

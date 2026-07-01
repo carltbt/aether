@@ -71,61 +71,76 @@ async function callClaude(
   model = MODEL_SONNET,      // ε — Pass 1+2 override avec MODEL_HAIKU
 ): Promise<CallResult> {
   const t0 = Date.now();
-  try {
-    const r = await fetch(ANTHROPIC_URL, {
-      method: "POST",
-      headers: {
-        "x-api-key": apiKey,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        model,
-        max_tokens: maxTokens,
-        temperature,
-        system: systemPrompt,
-        messages: [{ role: "user", content: userPrompt }],
-      }),
-    });
-    const latency_ms = Date.now() - t0;
-    if (!r.ok) {
-      return {
-        ok: false,
-        latency_ms,
-        cost_usd: 0,
-        error: `HTTP ${r.status}: ${(await r.text()).slice(0, 300)}`,
-      };
-    }
-    const data = await r.json() as ClaudeResponse;
-    const text = data.content?.find(b => b.type === "text")?.text ?? "";
-    let parsed: Record<string, unknown> | undefined;
+  // Audit 01/07 : retry/backoff sur 429/5xx (un 429 sur pass3 droppait le ticker
+  // en silence, non rattrapable) + fail-closed sur JSON illisible (HTTP 200 mais
+  // parse KO → ok:false plutôt qu'une dégradation muette en HOLD/null).
+  const MAX_RETRIES = 3;
+  let lastErr = "";
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
-      // Strip ```json fences si Claude en met malgré l'instruction
-      const cleaned = text.replace(/^```json\s*|\s*```$/g, "").trim();
-      parsed = JSON.parse(cleaned);
-    } catch {
-      // Try to extract first {...} block
-      const match = text.match(/\{[\s\S]*\}/);
-      if (match) {
-        try { parsed = JSON.parse(match[0]); } catch { /* keep undefined */ }
+      const r = await fetch(ANTHROPIC_URL, {
+        method: "POST",
+        headers: {
+          "x-api-key": apiKey,
+          "anthropic-version": "2023-06-01",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: maxTokens,
+          temperature,
+          system: systemPrompt,
+          messages: [{ role: "user", content: userPrompt }],
+        }),
+      });
+      if (r.status === 429 || r.status >= 500) {
+        lastErr = `HTTP ${r.status}: ${(await r.text()).slice(0, 200)}`;
+        if (attempt < MAX_RETRIES) {
+          const ra = parseFloat(r.headers.get("retry-after") ?? "");
+          const backoff = Number.isFinite(ra) ? Math.min(30000, ra * 1000)
+            : Math.min(8000, 700 * 2 ** attempt) * (0.5 + Math.random());
+          await new Promise(res => setTimeout(res, backoff));
+          continue;
+        }
+        return { ok: false, latency_ms: Date.now() - t0, cost_usd: 0, error: lastErr };
       }
+      if (!r.ok) {
+        return { ok: false, latency_ms: Date.now() - t0, cost_usd: 0, error: `HTTP ${r.status}: ${(await r.text()).slice(0, 300)}` };
+      }
+      const data = await r.json() as ClaudeResponse;
+      const text = data.content?.find(b => b.type === "text")?.text ?? "";
+      let parsed: Record<string, unknown> | undefined;
+      try {
+        const cleaned = text.replace(/^```json\s*|\s*```$/g, "").trim();
+        parsed = JSON.parse(cleaned);
+      } catch {
+        const match = text.match(/\{[\s\S]*\}/);
+        if (match) { try { parsed = JSON.parse(match[0]); } catch { /* keep undefined */ } }
+      }
+      if (!parsed) {
+        return { ok: false, raw_text: text, usage: data.usage, latency_ms: Date.now() - t0, cost_usd: costUsd(data.usage, model), error: "json_parse_failed" };
+      }
+      return { ok: true, parsed, raw_text: text, usage: data.usage, latency_ms: Date.now() - t0, cost_usd: costUsd(data.usage, model) };
+    } catch (e) {
+      lastErr = String((e as Error).message ?? e);
+      if (attempt < MAX_RETRIES) {
+        await new Promise(res => setTimeout(res, Math.min(8000, 700 * 2 ** attempt) * (0.5 + Math.random())));
+        continue;
+      }
+      return { ok: false, latency_ms: Date.now() - t0, cost_usd: 0, error: lastErr };
     }
-    return {
-      ok: true,
-      parsed,
-      raw_text: text,
-      usage: data.usage,
-      latency_ms,
-      cost_usd: costUsd(data.usage, model),
-    };
-  } catch (e) {
-    return {
-      ok: false,
-      latency_ms: Date.now() - t0,
-      cost_usd: 0,
-      error: String((e as Error).message ?? e),
-    };
   }
+  return { ok: false, latency_ms: Date.now() - t0, cost_usd: 0, error: lastErr || "unknown" };
+}
+
+// Table de fraîcheur C1 (déterministe, code — plus dans la tête du LLM). jours depuis earnings.
+function freshnessMult(days: number | null): number {
+  if (days === null) return 0.10;
+  if (days <= 3) return 1.00;
+  if (days <= 7) return 0.83;
+  if (days <= 12) return 0.55;
+  if (days <= 21) return 0.27;
+  return 0.10;
 }
 
 async function logCall(
@@ -344,13 +359,20 @@ function prepFundamentals(c: Collected, ticker: string, sector: string | undefin
   const dcfRow = dcfArr?.[0] ?? {};
   const dcfValue = dcfRow.dcf ?? "n/a";
   const dcfCurrentPrice = dcfRow["Stock Price"] ?? dcfRow.stockPrice ?? "n/a";
-  const dcfUpside = (typeof dcfValue === "number" && typeof dcfCurrentPrice === "number" && dcfCurrentPrice !== 0)
-    ? `${(((dcfValue - dcfCurrentPrice) / dcfCurrentPrice) * 100).toFixed(1)}%` : "n/a";
+  // DCF sanitize (audit 01/07) : l'endpoint FMP renvoie ~1/3 de valeurs aberrantes
+  // (upside de -533% à +1136%). On invalide dcf ≤ 0 et |upside| > 100% → 'n/a'.
+  const dcfUpsideNum = (typeof dcfValue === "number" && dcfValue > 0 && typeof dcfCurrentPrice === "number" && dcfCurrentPrice > 0)
+    ? ((dcfValue - dcfCurrentPrice) / dcfCurrentPrice) * 100 : null;
+  const dcfUpside = (dcfUpsideNum !== null && Math.abs(dcfUpsideNum) <= 100)
+    ? `${dcfUpsideNum.toFixed(1)}%` : "n/a (DCF FMP non fiable — ignorer)";
 
-  // key_metrics : tous les champs ont le suffixe TTM
+  // EV/EBITDA : le champ km.evToEBITDATTM N'EXISTE PAS chez FMP (comme le bug roe).
+  // Le vrai champ est enterpriseValueMultipleTTM, présent dans ratios-ttm (déjà collecté).
   const kmArr = c.data.C5_valuation.key_metrics as Array<Record<string, unknown>> | null;
   const km = kmArr?.[0] ?? {};
-  const evEbitda = km.evToEBITDATTM ?? "n/a";
+  const ratiosArr = c.data.C5_valuation.ratios as Array<Record<string, unknown>> | null;
+  const rt = ratiosArr?.[0] ?? {};
+  const evEbitda = rt.enterpriseValueMultipleTTM ?? km.evToEBITDA ?? km.evToEBITDATTM ?? "n/a";
   const fcfYield = km.freeCashFlowYieldTTM ?? "n/a";
   const earningsYield = km.earningsYieldTTM ?? "n/a";
   const roce = km.returnOnCapitalEmployedTTM ?? km.returnOnInvestedCapitalTTM ?? "n/a";
@@ -485,6 +507,7 @@ C5 VALUATION:
 - DCF upside 20-40% → 7-8
 - DCF upside 10-20% → 6-7
 - DCF downside > 20% → 1-2
+- If DCF upside is "n/a" (unreliable/negative FMP DCF), IGNORE DCF entirely and score C5 on EV/EBITDA + earnings yield + FCF yield vs sector only. A missing DCF is NOT a negative.
 - BONUS +1 if EV/EBITDA below sector median
 - BONUS +2 if EV/EBITDA < 50% of sector median (deep value)
 
@@ -610,8 +633,19 @@ Deno.serve(async (req: Request) => {
   const pass3LogId = await logCall(supabase, "analysis_pass3", ticker, pass3);
 
   // === Step 5: Aggregate scores ===
+  // C1 RECALCULÉ DÉTERMINISTE en code (audit 01/07) : le LLM émettait un c1 final
+  // arithmétiquement faux et non-reproductible (×2-6 à temp=0). On garde son jugement
+  // (eps_score, upgrades_score, days) mais on applique la formule + la fraîcheur en code.
+  const c1d = pass3.parsed?.c1_fallback_details as { eps_score?: number; upgrades_score?: number; days_since_earnings?: number } | undefined;
+  let c1Final: number | null = (pass3.parsed?.score_c1_earnings as number | undefined) ?? null;
+  if (c1d && typeof c1d.eps_score === "number" && typeof c1d.upgrades_score === "number") {
+    const days = typeof c1d.days_since_earnings === "number" ? c1d.days_since_earnings : null;
+    const raw = (c1d.eps_score * 0.6 + c1d.upgrades_score * 0.4) * freshnessMult(days);
+    c1Final = Math.max(1, Math.min(10, Math.round(raw)));
+  }
+
   const scores = {
-    c1: pass3.parsed?.score_c1_earnings ?? null,
+    c1: c1Final,
     c2: pass1.parsed?.score_c2_momentum ?? null,
     c3: pass3.parsed?.score_c3_smart_money ?? null,
     c4: pass3.parsed?.score_c4_quality ?? null,

@@ -31,23 +31,40 @@ function costUsd(u?: ClaudeUsage): number {
 
 async function callClaude(apiKey: string, system: string, user: string, maxTokens = 1000, temperature = 0): Promise<CallResult> {
   const t0 = Date.now();
-  try {
-    const r = await fetch(ANTHROPIC_URL, {
-      method: "POST",
-      headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-      body: JSON.stringify({ model: MODEL, max_tokens: maxTokens, temperature, system, messages: [{ role: "user", content: user }] }),
-    });
-    const latency_ms = Date.now() - t0;
-    if (!r.ok) return { ok: false, latency_ms, cost_usd: 0, error: `HTTP ${r.status}: ${(await r.text()).slice(0, 300)}` };
-    const data = await r.json();
-    const text = data.content?.find((b: { type: string }) => b.type === "text")?.text ?? "";
-    let parsed: Record<string, unknown> | undefined;
-    try { parsed = JSON.parse(text.replace(/^```json\s*|\s*```$/g, "").trim()); }
-    catch { const m = text.match(/\{[\s\S]*\}/); if (m) { try { parsed = JSON.parse(m[0]); } catch {} } }
-    return { ok: true, parsed, raw_text: text, usage: data.usage, latency_ms, cost_usd: costUsd(data.usage) };
-  } catch (e) {
-    return { ok: false, latency_ms: Date.now() - t0, cost_usd: 0, error: String((e as Error).message ?? e) };
+  const MAX_RETRIES = 3;
+  let lastErr = "";
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const r = await fetch(ANTHROPIC_URL, {
+        method: "POST",
+        headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+        body: JSON.stringify({ model: MODEL, max_tokens: maxTokens, temperature, system, messages: [{ role: "user", content: user }] }),
+      });
+      if (r.status === 429 || r.status >= 500) {
+        lastErr = `HTTP ${r.status}`;
+        if (attempt < MAX_RETRIES) {
+          const ra = parseFloat(r.headers.get("retry-after") ?? "");
+          const backoff = Number.isFinite(ra) ? Math.min(30000, ra * 1000) : Math.min(8000, 700 * 2 ** attempt) * (0.5 + Math.random());
+          await new Promise(res => setTimeout(res, backoff));
+          continue;
+        }
+        return { ok: false, latency_ms: Date.now() - t0, cost_usd: 0, error: `${lastErr}: ${(await r.text()).slice(0, 200)}` };
+      }
+      if (!r.ok) return { ok: false, latency_ms: Date.now() - t0, cost_usd: 0, error: `HTTP ${r.status}: ${(await r.text()).slice(0, 300)}` };
+      const data = await r.json();
+      const text = data.content?.find((b: { type: string }) => b.type === "text")?.text ?? "";
+      let parsed: Record<string, unknown> | undefined;
+      try { parsed = JSON.parse(text.replace(/^```json\s*|\s*```$/g, "").trim()); }
+      catch { const m = text.match(/\{[\s\S]*\}/); if (m) { try { parsed = JSON.parse(m[0]); } catch {} } }
+      if (!parsed) return { ok: false, raw_text: text, usage: data.usage, latency_ms: Date.now() - t0, cost_usd: costUsd(data.usage), error: "json_parse_failed" };
+      return { ok: true, parsed, raw_text: text, usage: data.usage, latency_ms: Date.now() - t0, cost_usd: costUsd(data.usage) };
+    } catch (e) {
+      lastErr = String((e as Error).message ?? e);
+      if (attempt < MAX_RETRIES) { await new Promise(res => setTimeout(res, Math.min(8000, 700 * 2 ** attempt) * (0.5 + Math.random()))); continue; }
+      return { ok: false, latency_ms: Date.now() - t0, cost_usd: 0, error: lastErr };
+    }
   }
+  return { ok: false, latency_ms: Date.now() - t0, cost_usd: 0, error: lastErr || "unknown" };
 }
 
 async function logCall(supabase: SupabaseClient, log_type: string, ticker: string, r: CallResult): Promise<string | null> {

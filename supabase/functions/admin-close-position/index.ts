@@ -8,6 +8,7 @@
 // ============================================================================
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "jsr:@supabase/supabase-js@2";
 
 function jsonResponse(b: unknown, s: number) {
   return new Response(JSON.stringify(b, null, 2), { status: s, headers: { "Content-Type": "application/json" } });
@@ -38,7 +39,13 @@ Deno.serve(async (req: Request) => {
   if (!symbol) return jsonResponse({ ok: false, error: "missing_symbol" }, 400);
 
   const pos = await alpaca<{ qty: string; side: string }>("GET", `/v2/positions/${symbol}`);
-  if (!pos.ok || !pos.data) return jsonResponse({ ok: true, symbol, note: "no_position (déjà à plat)", detail: pos.error }, 200);
+  // Audit 01/07 : SEUL un 404 = réellement à plat. Une erreur transitoire (401/403/500/réseau)
+  // ne doit PAS être rapportée « à plat » (pour un outil d'un-shorting, ça laisserait un short découvert).
+  if (!pos.ok) {
+    if (pos.status === 404) return jsonResponse({ ok: true, symbol, note: "no_position (déjà à plat)" }, 200);
+    return jsonResponse({ ok: false, symbol, error: "alpaca_position_lookup_failed", status: pos.status, detail: pos.error }, 502);
+  }
+  if (!pos.data) return jsonResponse({ ok: true, symbol, note: "no_position" }, 200);
 
   const signedQty = parseFloat(pos.data.qty);
   const absQty = Math.abs(signedQty);
@@ -49,6 +56,22 @@ Deno.serve(async (req: Request) => {
     symbol, qty: String(absQty), side, type: "market", time_in_force: "day",
   });
 
+  // Trace DB (audit 01/07) : sans ça la clôture manuelle était invisible (ops-watchdog/EOD/PnL)
+  // et la ligne positions restait OPEN indéfiniment. Best-effort, ne bloque pas la réponse.
+  if (order.ok) {
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (supabaseUrl && serviceKey) {
+      try {
+        const supabase = createClient(supabaseUrl, serviceKey);
+        await supabase.from("positions").update({ status: "CLOSED", exit_reason: "admin_manual_close", closed_at: new Date().toISOString() })
+          .eq("ticker", symbol).eq("status", "OPEN");
+        await supabase.from("system_heartbeats").insert({ status: "ok", cycles_completed: 0, stocks_analyzed: 0,
+          notes: `admin-close-position | ${symbol} | ${side} ${absQty} | order=${order.data?.id ?? "?"}` });
+      } catch (e) { console.error("admin-close DB trace failed:", (e as Error).message); }
+    }
+  }
+
   return jsonResponse({
     ok: order.ok,
     symbol,
@@ -57,6 +80,6 @@ Deno.serve(async (req: Request) => {
     order_id: order.data?.id,
     order_status: order.data?.status,
     error: order.error,
-    note: order.ok ? "Ordre soumis (exécute à l'ouverture si marché fermé)." : "Échec — réessayer marché ouvert.",
+    note: order.ok ? "Ordre soumis + trace DB (position marquée CLOSED)." : "Échec — réessayer marché ouvert.",
   }, 200);
 });

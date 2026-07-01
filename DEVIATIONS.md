@@ -127,7 +127,29 @@ Le backtest d'entrée v1 (point-in-time, breakout momentum vs entrée aléatoire
 ### D-004c — P-006 (réévaluation hebdo 3-pass) non codé, substitut documenté
 STRATEGY.md 8.5 spécifie une re-évaluation hebdo 3-passes par position OPEN (SELL si conviction < 40). **Non implémentée.** Substitut actif : `review-positions` (revue LLM quotidienne single-call HOLD/SELL, cf. D-002). Plus léger qu'un re-score complet, mais quotidien plutôt qu'hebdo. **Réévaluation** : implémenter P-006 complet avant tout go-live argent réel, ou acter formellement le substitut.
 
-### D-004d — C1 (25%) s'effondre en freshness ×0.1 hors fenêtre earnings
+## D-005 — Remédiation « cœur » du diagnostic med (01/07)
+
+**Date** : 2026-07-01
+**Statut** : Actif
+**Sections impactées** : robustesse (appels LLM), 8 (exécution/Couche 2), 5 (C1/C5 scoring), observabilité
+
+Suite au diagnostic des optionnels + découverte (52 findings, 42 nouveaux, 23 vérifiés). Thème transversal : « succès HTTP masquant un échec sémantique ». Correctifs déployés (10 fonctions) :
+
+- **Retry/backoff LLM (429/5xx)** dans le `callClaude` des 5 fonctions Claude (run-analysis-passes, run-researchers, generate-decision, review-decision, review-positions) : 3 retries jittered, honore `Retry-After`. Motif : un 429 sur pass3 droppait le ticker en silence (5 confirmés), non rattrapable par sweep.
+- **Fail-closed JSON** : HTTP 200 mais JSON illisible → `ok:false error:"json_parse_failed"` (au lieu d'une dégradation muette en HOLD/null).
+- **execute-order fill-orphan** : un échec d'écriture DB APRÈS un fill Alpaca était avalé (`ok:true`) → position live non trackée. Désormais retry 1× puis `ok:false needs_reconcile` + heartbeat `partial_error` + flag `DB_ORPHAN_RISK`.
+- **C1 déterministe en code** : `c1 = clamp(round((eps×0.6 + upgrades×0.4) × freshnessMult(days)), 1, 10)` — le LLM n'émet plus que ses composantes de jugement. Vérifié sur AAON (eps2/upg1/56j → c1=1). Corrige un biais ×2-6 non-reproductible à temp=0.
+- **EV/EBITDA** : `km.evToEBITDATTM` n'existe pas chez FMP (même classe que le bug roe) → lecture de `enterpriseValueMultipleTTM` depuis ratios-ttm. **DCF sanitize** : dcf ≤ 0 ou |upside| > 100% → n/a (both run-analysis-passes + snapshot-features), + règle de rubrique C5.
+- **validate-order RR** : le ratio 1:2 passe de *warning* à *reject* (Couche 2 fermait un trou : un TP < 2×SL passait).
+- **admin-close-position** : seul un 404 = « à plat » (une erreur transitoire ne l'est plus) + trace DB (position CLOSED + heartbeat).
+- **ops-watchdog** : alerte sur `partial_error` du jour + orphelin `DB_ORPHAN_RISK` + réconciliation position Alpaca sans ligne OPEN en DB.
+
+### Critère de réévaluation
+Surveiller les heartbeats `partial_error` et les alertes Discord ; si des 429 persistent malgré le retry, augmenter MAX_RETRIES ou espacer les batches. Le reste du diagnostic (Reviewer Conservative gradué, Bull/Bear ±10, staleness contexte, rebalance C1/C3, P-006, shadow filter) reste en attente (tier « tout l'actionnable », non fait).
+
+---
+
+## D-004d — C1 (25%) s'effondre en freshness ×0.1 hors fenêtre earnings
 Le cluster le plus pondéré (C1 Earnings 25%) est multiplié par un facteur de fraîcheur qui tombe à ×0.1 au-delà de 21j post-earnings ; `select-daily-candidates` injecte des candidats momentum (freshness=0). Résultat : C1 devient un plancher quasi-fixe pour une grande part des candidats → conviction tirée vers la bande HOLD (les non-exécutés se groupent à 43-58, juste sous le gate 60). **Piste (non appliquée)** : pour les candidats de la branche momentum, renormaliser C1 hors dénominateur (traiter comme manquant) OU profil de poids distinct. À trancher avec les données du feature store.
 
 ---

@@ -72,8 +72,17 @@ Deno.serve(async () => {
 
   // 1+2. Heartbeats du jour
   const { data: hbToday } = await supabase
-    .from("system_heartbeats").select("notes").gte("recorded_at", `${todayStr}T00:00:00Z`);
-  const notes = (hbToday ?? []).map(h => String(h.notes ?? ""));
+    .from("system_heartbeats").select("notes, status").gte("recorded_at", `${todayStr}T00:00:00Z`);
+  const hbRows = hbToday ?? [];
+  const notes = hbRows.map(h => String(h.notes ?? ""));
+
+  // partial_error (audit 01/07) : un run analysis qui a droppé des tickers écrit
+  // status=partial_error mais gardait ' END' → l'ancien check restait vert.
+  const partialAnalysis = hbRows.find(h => String(h.notes ?? "").startsWith("run-daily-analysis") && h.status === "partial_error");
+  if (partialAnalysis) alerts.push(`🟠 run-daily-analysis partial_error (tickers droppés) : ${String(partialAnalysis.notes).slice(0, 220)}`);
+  // execute-order fill-orphan (audit 01/07) : fill OK mais écriture DB échouée.
+  const dbOrphan = hbRows.find(h => String(h.notes ?? "").includes("DB_ORPHAN_RISK"));
+  if (dbOrphan) alerts.push(`🔴 execute-order DB_ORPHAN_RISK : ${String(dbOrphan.notes).slice(0, 220)}`);
   // Matche le heartbeat de FIN (' END' / 'no candidate') — pas le START — sinon un
   // run qui démarre puis crashe en cours (mode 429-truncation) reporterait vert.
   const ranAnalysis = notes.some(n => n.startsWith("run-daily-analysis") && (n.includes(" END") || n.includes("no candidate") || n.includes("candidates=0")));
@@ -119,6 +128,12 @@ Deno.serve(async () => {
     if (nakedSymbols.length > 0) {
       alerts.push(`🔴 position(s) SANS stop-loss actif : ${nakedSymbols.join(", ")} — bracket à ré-armer`);
     }
+    // Réconciliation (audit 01/07) : position live Alpaca sans ligne OPEN en DB = non
+    // trackée par la logique de sortie (chemin execute-order fill-orphan).
+    const { data: dbOpen } = await supabase.from("positions").select("ticker").eq("status", "OPEN");
+    const dbTickers = new Set((dbOpen ?? []).map(p => p.ticker as string));
+    const untracked = positions.map(p => p.symbol).filter(s => !dbTickers.has(s));
+    if (untracked.length > 0) alerts.push(`🔴 position(s) Alpaca sans ligne OPEN en DB (non trackées) : ${untracked.join(", ")}`);
   } else if (posCount !== null && ordCount !== null && posCount > 0 && ordCount === 0) {
     alerts.push(`🔴 ${posCount} position(s) Alpaca mais 0 ordre ouvert = brackets/stops ABSENTS`);
   }
