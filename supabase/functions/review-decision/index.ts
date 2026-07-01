@@ -106,8 +106,13 @@ CRITICAL RULES:
 
 THE 3 PERSPECTIVES TO EVALUATE:
 
-1. CONSERVATIVE — "What risks here justify BLOCKING this trade?"
-   Hunt for: signal conflicts the Trader minimized, missing data the Trader optimistically interpreted, exposure to events the Trader ignored, fundamental weakness masked by momentum, valuation stretched beyond justification.
+1. CONSERVATIVE — "Do the risks OUTWEIGH the setup, or are they present-but-manageable?"
+   Hunt for risks: signal conflicts the Trader minimized, missing data optimistically interpreted, event exposure ignored, fundamental weakness masked by momentum, valuation stretched beyond justification.
+   ⚠️ CRITICAL: finding a risk is NOT automatically a REJECT vote. Grade your stance HONESTLY:
+   - REJECT only if the risks are severe enough that you would REFUSE this trade outright.
+   - NEUTRAL if real risks exist but are mitigated, priced in, or offset by the setup's strengths.
+   - APPROVE if the downside is limited / well-contained relative to the opportunity.
+   A perspective that always REJECTs is useless — most tradeable setups carry SOME risk.
 
 2. NEUTRAL — "Is the conviction value supported by the actual evidence?"
    Audit: does the conviction match what scores + debate would naturally produce? Did Trader override formula by >15 points without clear justification? Is sizing proportional to conviction per STRATEGY.md table?

@@ -145,7 +145,17 @@ Suite au diagnostic des optionnels + découverte (52 findings, 42 nouveaux, 23 v
 - **ops-watchdog** : alerte sur `partial_error` du jour + orphelin `DB_ORPHAN_RISK` + réconciliation position Alpaca sans ligne OPEN en DB.
 
 ### Critère de réévaluation
-Surveiller les heartbeats `partial_error` et les alertes Discord ; si des 429 persistent malgré le retry, augmenter MAX_RETRIES ou espacer les batches. Le reste du diagnostic (Reviewer Conservative gradué, Bull/Bear ±10, staleness contexte, rebalance C1/C3, P-006, shadow filter) reste en attente (tier « tout l'actionnable », non fait).
+Surveiller les heartbeats `partial_error` et les alertes Discord ; si des 429 persistent malgré le retry, augmenter MAX_RETRIES ou espacer les batches.
+
+### D-005b — Rééquilibrage anti-strict (déployé) + vérification « pas plus strict »
+Le recompute C1 déterministe (D-005) corrige un biais **haussier** du LLM → pour les valeurs momentum à earnings anciens, C1 tombait à ~1 et **tirait la conviction sous le gate 60 = plus strict**. Contre-mesures déployées pour garantir un net **neutre-ou-moins-strict** (jamais plus) :
+- **C1 renormalisé** (run-analysis-passes) : candidat momentum (C2≥7) sans catalyseur frais (>21j) → C1 traité comme **MANQUANT** (calculate-scores renormalise son poids de 25% sur les autres clusters) au lieu d'un score plancher.
+- **C3 baseline** : rubrique renforcée — absence d'activité insider = **NEUTRE (5)**, pas négatif ; 2-3 réservé aux ventes observées (médiane réelle était 3).
+- **Reviewer Conservative gradué** (review-decision) : la perspective Conservative votait **REJECT 52/52** (biais structurel) → dégradait le veto 2/3 en veto « 1 REJECT » et appliquait −15% à presque tout BUY. Reformulée en verdict gradué APPROVE/NEUTRAL/REJECT.
+
+**Vérification (baseline live avant D-005b)** : 291 signaux, conviction moy **53.7**, **74/291** franchissent le gate 60, **111 coincés à 50-59** juste sous le gate, Conservative **52/52 REJECT**. Direction de chaque changement : C1-renorm ↑conviction momentum, C3-baseline +4 sur les « no-activity », Conservative-gradué débloque les BUY approuvés à taille pleine. **Net : MOINS strict** (plus de BUY franchissent + plus approuvés + taille pleine), ce qui compense et dépasse la sévérité du recompute C1. Le seul nouveau gate dur (RR 2:1) bloque **0 BUY actuel** (48/48 déjà ≥2.0).
+
+**Reste en attente** (strictness-neutre, non fait) : Bull/Bear ±10 (generate-decision), staleness contexte write-side (fetch-daily-context), shadow filter (track-shadow-portfolio), P-006 (re-éval hebdo 3-pass + colonnes entry-snapshot + cron).
 
 ---
 

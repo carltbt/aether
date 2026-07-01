@@ -489,8 +489,8 @@ C3 SMART MONEY (3/4 signals — 13F unavailable):
 - Clustered buys (3+ insiders within 2 weeks) → 10
 - Congress healthcare/tech buy < 45d → 8-9
 - Recent insider buys, no sells → 6-7
-- No notable activity → 5
-- Significant insider sells → 2-3
+- No notable activity → 5  (IMPORTANT: absence of insider buys is NEUTRAL = 5, NOT negative. Mid-caps rarely show open-market insider buys — do NOT score 2-3 just because there are no buys.)
+- Significant insider SELLING (observed open-market sells) → 2-3
 - PENALTY -1 if CEO/CFO buy filed > 5d late (P15 stale signal)
 
 C4 QUALITY (DEFENSIVE FILTER ONLY per P12 — never alpha generator):
@@ -638,10 +638,21 @@ Deno.serve(async (req: Request) => {
   // (eps_score, upgrades_score, days) mais on applique la formule + la fraîcheur en code.
   const c1d = pass3.parsed?.c1_fallback_details as { eps_score?: number; upgrades_score?: number; days_since_earnings?: number } | undefined;
   let c1Final: number | null = (pass3.parsed?.score_c1_earnings as number | undefined) ?? null;
+  let c1Renormalized = false;
   if (c1d && typeof c1d.eps_score === "number" && typeof c1d.upgrades_score === "number") {
     const days = typeof c1d.days_since_earnings === "number" ? c1d.days_since_earnings : null;
-    const raw = (c1d.eps_score * 0.6 + c1d.upgrades_score * 0.4) * freshnessMult(days);
-    c1Final = Math.max(1, Math.min(10, Math.round(raw)));
+    // Contre-mesure (audit D-005) : sur un candidat MOMENTUM (C2≥7) sans catalyseur frais
+    // (>21j ou pas d'earnings), C1 n'est PAS un signal → on le traite comme MANQUANT
+    // (calculate-scores renormalise son poids de 25% sur les autres clusters) au lieu d'un
+    // score plancher qui tirerait la conviction vers HOLD. Équilibre le recompute C1 (ne pas
+    // rendre le système plus strict). Sinon, formule déterministe en code.
+    if ((days === null || days > 21) && (c2Score ?? 0) >= 7) {
+      c1Final = null;
+      c1Renormalized = true;
+    } else {
+      const raw = (c1d.eps_score * 0.6 + c1d.upgrades_score * 0.4) * freshnessMult(days);
+      c1Final = Math.max(1, Math.min(10, Math.round(raw)));
+    }
   }
 
   const scores = {
@@ -670,6 +681,7 @@ Deno.serve(async (req: Request) => {
     fallbacks_applied: [
       "c1_transcript_missing (Premium plan, DEVIATIONS D-001)",
       "c3_13f_missing (Premium plan, DEVIATIONS D-001)",
+      ...(c1Renormalized ? ["c1_renormalized_no_fresh_catalyst_momentum (D-005)"] : []),
     ],
     context_priming_active: sentPrep.contextPriming,
     news_window_used: `${sentPrep.window_hours}h (${sentPrep.n_articles} articles)`,
