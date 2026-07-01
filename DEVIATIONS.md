@@ -105,3 +105,29 @@ Suite à l'audit multi-agents (26 agents, vérif DB live), batch de correctifs d
 Réarmer l'auto-tuner uniquement après backtest + ≥30 trades. Affiner `MAX_HOLD_TRADING_DAYS`, give-back et le cap N sur la grille de sensibilité du backtest.
 
 ---
+
+## D-004 — Remédiation post-audit complet (01/07)
+
+**Date** : 2026-07-01
+**Statut** : Actif
+**Sections impactées** : 7 (Reviewer), 8 (Couche 2/3, exécution), 5 (C1), 8.5 (réévaluation)
+
+Suite à l'audit exhaustif 100% (10 domaines, 15 agents, findings vérifiés en adversarial). Correctifs de sûreté/correctness (pas de changement de thèse). Les 4 HIGH + quick wins :
+
+- **Short à nu bloqué (2 couches)** : `execute-order` ne soumet PLUS de SELL (le payload historique `qty:"1"` market sans garde de position détenue pouvait ouvrir un short sur un ticker non-détenu). Les sorties passent EXCLUSIVEMENT par update-positions / review-positions (durcis no-oversell). Indépendamment, `validate-order` REJETTE tout SELL sans position OPEN (Couche 2). Long-only V1 garanti.
+- **Veto Reviewer 2/3 déterministe** : `review-decision` comptait uniquement le `verdict` libre du modèle. Ajout d'un tally code des 3 stances de perspectives → FORCE REJECT si ≥2 REJECT (BUY uniquement, SELL reste asymétrique-approve P14). Le veto « non-négociable » de STRATEGY.md ne dépend plus de l'auto-cohérence du LLM.
+- **Watchdog bracket PAR POSITION** : l'ancien check agrégé (pos>0 && ordres=0) ne voyait pas UNE position à nu parmi plusieurs. Détection par symbole d'un leg protecteur (stop OU OCO/bracket via `legs`). **A immédiatement révélé COO+KBH sans stop natif** (les OCO stop legs avaient disparu, il ne restait que le TP) → ré-armés en OCO propre via `admin-rearm-stops` (COO stop 65.56, KBH stop 57.96).
+- **roe** : `feature_snapshots.roe` était 100% NULL (le champ `returnOnEquityTTM` n'existe pas dans ratios-ttm). Dérivé de `netIncomePerShareTTM / shareholdersEquityPerShareTTM` (null si equity ≤ 0) + backfill des snapshots existants.
+- **Watchdog fin-de-run** : match du heartbeat `END` (pas `START`) → un run qui crashe en cours ne reporte plus vert. Cron `update-positions` étendu à `13-21` UTC (couvre la clôture en hiver EST).
+- **RLS + index** : policy `admin_full_access` canonique sur `feature_snapshots` ; index sur `shadow_positions.signal_id`.
+
+### D-004b — Finding backtest ENTRÉE (couche prix sans edge)
+Le backtest d'entrée v1 (point-in-time, breakout momentum vs entrée aléatoire) montre : avg **+0.088%/trade** vs random **+0.779%/8j** → **edge ≈ −0.69%/trade**, profit factor ~1.0, TP 18% quasi jamais touché. **Conclusion : la couche prix/momentum (C2) seule n'est PAS l'edge** dans le régime haussier actuel. L'edge doit venir des catalyseurs PEAD + fondamentaux + synthèse LLM — non testable sans données as-of (d'où le feature store, cf. [create_feature_snapshots]). **Réévaluation** : re-run une fois ~6 mois de snapshots accumulés (IC par cluster).
+
+### D-004c — P-006 (réévaluation hebdo 3-pass) non codé, substitut documenté
+STRATEGY.md 8.5 spécifie une re-évaluation hebdo 3-passes par position OPEN (SELL si conviction < 40). **Non implémentée.** Substitut actif : `review-positions` (revue LLM quotidienne single-call HOLD/SELL, cf. D-002). Plus léger qu'un re-score complet, mais quotidien plutôt qu'hebdo. **Réévaluation** : implémenter P-006 complet avant tout go-live argent réel, ou acter formellement le substitut.
+
+### D-004d — C1 (25%) s'effondre en freshness ×0.1 hors fenêtre earnings
+Le cluster le plus pondéré (C1 Earnings 25%) est multiplié par un facteur de fraîcheur qui tombe à ×0.1 au-delà de 21j post-earnings ; `select-daily-candidates` injecte des candidats momentum (freshness=0). Résultat : C1 devient un plancher quasi-fixe pour une grande part des candidats → conviction tirée vers la bande HOLD (les non-exécutés se groupent à 43-58, juste sous le gate 60). **Piste (non appliquée)** : pour les candidats de la branche momentum, renormaliser C1 hors dénominateur (traiter comme manquant) OU profil de poids distinct. À trancher avec les données du feature store.
+
+---

@@ -74,7 +74,9 @@ Deno.serve(async () => {
   const { data: hbToday } = await supabase
     .from("system_heartbeats").select("notes").gte("recorded_at", `${todayStr}T00:00:00Z`);
   const notes = (hbToday ?? []).map(h => String(h.notes ?? ""));
-  const ranAnalysis = notes.some(n => n.startsWith("run-daily-analysis"));
+  // Matche le heartbeat de FIN (' END' / 'no candidate') — pas le START — sinon un
+  // run qui démarre puis crashe en cours (mode 429-truncation) reporterait vert.
+  const ranAnalysis = notes.some(n => n.startsWith("run-daily-analysis") && (n.includes(" END") || n.includes("no candidate") || n.includes("candidates=0")));
   const ranReview = notes.some(n => n.startsWith("review-positions"));
   if (!ranAnalysis) alerts.push("🔴 run-daily-analysis : AUCUN heartbeat aujourd'hui");
   if (!ranReview) alerts.push("🟠 review-positions : aucun heartbeat aujourd'hui");
@@ -96,12 +98,28 @@ Deno.serve(async () => {
   const lastSnapshot = snapRows?.[0]?.snapshot_date ?? null;
   if (!lastSnapshot) alerts.push("🟠 feature_snapshots : aucun snapshot depuis >4j (snapshot-features KO ?)");
 
-  // 4. Bracket sanity (Alpaca) : positions ouvertes mais 0 ordre ouvert = stops absents
+  // 4. Bracket sanity (Alpaca) — PAR POSITION (audit 01/07). L'ancien check agrégé
+  //    (pos>0 && ord===0) ne voyait pas UNE position à nu parmi plusieurs. On alerte
+  //    désormais tout symbole détenu sans leg de type stop* ouvert = exposé sans filet.
   const positions = await alpacaGet<Array<{ symbol: string }>>("/v2/positions");
-  const orders = await alpacaGet<Array<{ id: string }>>("/v2/orders?status=open&limit=500");
+  const orders = await alpacaGet<Array<{ id: string; symbol: string; type: string; order_class?: string; legs?: Array<{ type?: string }> }>>("/v2/orders?status=open&nested=true&limit=500");
   const posCount = Array.isArray(positions) ? positions.length : null;
   const ordCount = Array.isArray(orders) ? orders.length : null;
-  if (posCount !== null && ordCount !== null && posCount > 0 && ordCount === 0) {
+  // Un ordre protège si c'est un stop, ou un OCO/bracket (qui contient une jambe
+  // stop nichée dans `legs` — Alpaca expose l'OCO comme UN ordre type=limit).
+  const isProtective = (o: { type?: string; order_class?: string; legs?: Array<{ type?: string }> }) =>
+    /stop/i.test(String(o.type ?? "")) ||
+    ["oco", "bracket", "otoco", "oto"].includes(String(o.order_class ?? "")) ||
+    (o.legs ?? []).some(l => /stop/i.test(String(l?.type ?? "")));
+  let nakedSymbols: string[] = [];
+  if (Array.isArray(positions) && Array.isArray(orders)) {
+    nakedSymbols = positions
+      .filter(p => !orders.some(o => o.symbol === p.symbol && isProtective(o)))
+      .map(p => p.symbol);
+    if (nakedSymbols.length > 0) {
+      alerts.push(`🔴 position(s) SANS stop-loss actif : ${nakedSymbols.join(", ")} — bracket à ré-armer`);
+    }
+  } else if (posCount !== null && ordCount !== null && posCount > 0 && ordCount === 0) {
     alerts.push(`🔴 ${posCount} position(s) Alpaca mais 0 ordre ouvert = brackets/stops ABSENTS`);
   }
 
@@ -109,7 +127,7 @@ Deno.serve(async () => {
 
   await supabase.from("system_heartbeats").insert({
     status, cycles_completed: 1, stocks_analyzed: 0,
-    notes: `ops-watchdog ${status} | analysis=${ranAnalysis} review=${ranReview} ctx=${hasContext} orphans=${orphanCount ?? "?"} pos=${posCount ?? "?"} orders=${ordCount ?? "?"} snap=${lastSnapshot ?? "none"}${alerts.length ? " | ALERTS: " + alerts.join(" ; ") : ""}`,
+    notes: `ops-watchdog ${status} | analysis=${ranAnalysis} review=${ranReview} ctx=${hasContext} orphans=${orphanCount ?? "?"} pos=${posCount ?? "?"} orders=${ordCount ?? "?"} naked=${nakedSymbols.length} snap=${lastSnapshot ?? "none"}${alerts.length ? " | ALERTS: " + alerts.join(" ; ") : ""}`,
   });
 
   if (alerts.length > 0) {
@@ -119,7 +137,7 @@ Deno.serve(async () => {
   return jsonResponse({
     ok: status === "ok",
     date: todayStr,
-    checks: { has_context: hasContext, ran_analysis: ranAnalysis, ran_review: ranReview, orphans_over_24h: orphanCount ?? null, alpaca_positions: posCount, alpaca_open_orders: ordCount, last_snapshot: lastSnapshot },
+    checks: { has_context: hasContext, ran_analysis: ranAnalysis, ran_review: ranReview, orphans_over_24h: orphanCount ?? null, alpaca_positions: posCount, alpaca_open_orders: ordCount, naked_positions: nakedSymbols, last_snapshot: lastSnapshot },
     alerts,
     duration_ms: Date.now() - t0,
   }, 200);

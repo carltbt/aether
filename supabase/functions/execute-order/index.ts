@@ -116,6 +116,18 @@ Deno.serve(async (req: Request) => {
   // --- Eligibility checks ---
   if (sig.executed) return jsonResponse({ ok: false, error: "signal_already_executed", alpaca_order_id: sig.alpaca_order_id }, 409);
   if (sig.action === "HOLD") return jsonResponse({ ok: true, skipped: "action_is_HOLD", signal_id: signalId }, 200);
+
+  // 🔒 Long-only V1 (audit 01/07) : execute-order ne soumet JAMAIS de SELL. Les
+  // sorties sont gérées EXCLUSIVEMENT par update-positions (stops/trailing/timeout)
+  // et review-positions (revue de thèse), tous deux durcis no-oversell (lisent la
+  // qty réelle Alpaca avant de vendre). Router un SELL ici — payload historique
+  // qty:"1" market sans garde de position détenue — pouvait ouvrir un SHORT À NU
+  // sur un ticker non-détenu (candidats issus du screener, pas des positions). On
+  // skip donc tout SELL. Couche 2 (validate-order) REJETTE aussi un SELL sans position.
+  if (sig.action === "SELL") {
+    return jsonResponse({ ok: true, skipped: "sell_routed_to_position_managers", ticker: sig.ticker, signal_id: signalId, note: "Exits handled by update-positions / review-positions — no naked short possible." }, 200);
+  }
+
   if (sig.reviewer_verdict !== "APPROVE") return jsonResponse({ ok: false, error: "reviewer_did_not_approve", reviewer_verdict: sig.reviewer_verdict }, 403);
   if (sig.code_validation !== "APPROVED") return jsonResponse({ ok: false, error: "code_validation_not_passed", code_validation: sig.code_validation }, 403);
 
@@ -159,8 +171,9 @@ Deno.serve(async (req: Request) => {
     }, 200);
   }
 
-  // --- Submit bracket order (GTC → les legs stop/TP PERSISTENT, ne expirent plus) ---
-  const orderPayload = sig.action === "BUY" ? {
+  // --- Submit BUY bracket order (GTC → les legs stop/TP PERSISTENT, ne expirent plus) ---
+  // SELL déjà court-circuité plus haut → ce chemin est exclusivement BUY (aucun short possible).
+  const orderPayload = {
     symbol: sig.ticker,
     qty: String(qty),
     side: "buy",
@@ -170,12 +183,6 @@ Deno.serve(async (req: Request) => {
     order_class: "bracket",
     stop_loss: { stop_price: stopLossPrice.toFixed(2) },
     take_profit: { limit_price: takeProfitPrice.toFixed(2) },
-  } : {
-    symbol: sig.ticker,
-    qty: "1",
-    side: "sell",
-    type: "market",
-    time_in_force: "day",
   };
 
   if (dry_run) {

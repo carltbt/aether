@@ -161,9 +161,19 @@ function validate(decision: {
   const warnings: string[] = [];
   const checks_passed: string[] = [];
 
-  // Skip validation for SELL/HOLD (only BUY orders need full validation)
+  // Skip full BUY checklist for HOLD (nothing to validate).
   if (decision.action === "HOLD") {
     return { approve: true, reject_reasons: [], warnings: ["HOLD action — no order to validate"], position_size_pct_final: 0, correlation_adjustment_applied: 0, correlation_note: "", checks_passed: ["hold_passthrough"] };
+  }
+
+  // 🔒 SELL guard (audit 01/07, Couche 2 indépendante) : en long-only V1 on ne peut
+  // vendre QUE ce qu'on détient. Un SELL sans position ouverte = tentative de SHORT
+  // À NU → REJECT. Ferme le chemin du short même si execute-order était contourné.
+  if (decision.action === "SELL") {
+    if (!context.alreadyHoldingTicker) {
+      return { approve: false, reject_reasons: [`sell_without_open_position_${decision.ticker} (long-only: no short)`], warnings: [], position_size_pct_final: 0, correlation_adjustment_applied: 0, correlation_note: "", checks_passed: [] };
+    }
+    return { approve: true, reject_reasons: [], warnings: ["SELL of held position — validated"], position_size_pct_final: 0, correlation_adjustment_applied: 0, correlation_note: "", checks_passed: ["sell_has_open_position"] };
   }
 
   // 0. Dédup ticker — déjà une position ouverte sur ce titre → REJECT

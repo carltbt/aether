@@ -36,6 +36,12 @@ function num(v: unknown): number | null {
   const n = typeof v === "string" ? parseFloat(v) : (v as number);
   return typeof n === "number" && !isNaN(n) ? n : null;
 }
+// ROE dérivé = résultat net/action ÷ capitaux propres/action (fraction, ex. 0.126).
+// null si capitaux propres ≤ 0 (ROE non significatif en equity négative).
+function roeFrom(nips: number | null, seps: number | null): number | null {
+  if (nips === null || seps === null || seps <= 0) return null;
+  return Math.round((nips / seps) * 10000) / 10000;
+}
 
 async function fmpOne(path: string, symbol: string, key: string): Promise<Record<string, unknown> | null> {
   try {
@@ -104,7 +110,9 @@ Deno.serve(async (req: Request) => {
         piotroski: num(fs?.piotroskiScore),
         ev_ebitda: num(rt?.enterpriseValueMultipleTTM) ?? num(rt?.evToEBITDATTM) ?? num(rt?.enterpriseValueOverEBITDATTM),
         pb: num(rt?.priceToBookRatioTTM) ?? num(rt?.pbRatioTTM),
-        roe: num(rt?.returnOnEquityTTM),
+        // ROE : ratios-ttm n'expose PAS returnOnEquityTTM (champ absent → 100% NULL avant
+        // le fix 01/07). On dérive depuis deux champs présents : BPA / capitaux propres/action.
+        roe: roeFrom(num(rt?.netIncomePerShareTTM), num(rt?.shareholdersEquityPerShareTTM)),
         net_margin: num(rt?.netProfitMarginTTM),
         year_high: num(q?.yearHigh),
         year_low: num(q?.yearLow),

@@ -210,7 +210,34 @@ Deno.serve(async (req: Request) => {
   const reviewer = await callClaude(anthropicKey, REVIEWER_SYSTEM, reviewerUserPrompt(decision!, scores!, portfolio), 1000);
   const reviewerLogId = await logCall(supabase, "reviewer", ticker, reviewer);
 
-  const review = reviewer.parsed as { verdict?: "APPROVE" | "REJECT"; size_adjustment_pct?: number; blocking_issues?: string[]; synthesis?: string } | undefined;
+  const review = reviewer.parsed as {
+    verdict?: "APPROVE" | "REJECT";
+    size_adjustment_pct?: number;
+    blocking_issues?: string[];
+    synthesis?: string;
+    perspectives?: {
+      conservative?: { stance?: string };
+      neutral?: { stance?: string };
+      aggressive?: { stance?: string };
+    };
+  } | undefined;
+
+  // 🔒 VETO DÉTERMINISTE (audit 01/07) — STRATEGY.md qualifie le veto 2/3-REJECT de
+  // NON-NÉGOCIABLE. Avant, seul le champ `verdict` libre du modèle était lu : un
+  // APPROVE émis alors que 2/3 des perspectives disent REJECT (auto-incohérence LLM
+  // documentée) passait sans filet. On compte donc les stances en code et on FORCE
+  // REJECT si ≥2 REJECT. Gardé aux BUY uniquement (SELL = protection asymétrique P14).
+  let veto_applied = false;
+  let reject_votes = 0;
+  if (review && String(decision?.action).toUpperCase() === "BUY") {
+    const stances = [review.perspectives?.conservative?.stance, review.perspectives?.neutral?.stance, review.perspectives?.aggressive?.stance];
+    reject_votes = stances.filter(s => String(s ?? "").toUpperCase() === "REJECT").length;
+    if (reject_votes >= 2 && review.verdict !== "REJECT") {
+      review.verdict = "REJECT";
+      veto_applied = true;
+      review.blocking_issues = [...(review.blocking_issues ?? []), `deterministic_veto_${reject_votes}_of_3_perspectives_REJECT`];
+    }
+  }
 
   // --- Update signals row with reviewer_verdict ---
   let signalUpdated = false;
@@ -239,6 +266,7 @@ Deno.serve(async (req: Request) => {
     duration_ms: Date.now() - t0,
     cost_usd: reviewer.cost_usd,
     review,
+    deterministic_veto: { applied: veto_applied, reject_votes },
     pass: { log_id: reviewerLogId, latency_ms: reviewer.latency_ms, usage: reviewer.usage, error: reviewer.error },
   }, 200);
 });
