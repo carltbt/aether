@@ -135,7 +135,7 @@ const CSS = `
 @media (min-width: 1024px) { .room-grid { grid-template-columns: repeat(4, 1fr); gap: 24px; } }
 
 /* ---- Carte agent ---- */
-.ag { --walk: 68px; position: relative; border-radius: 16px; background: linear-gradient(180deg, #ffffff, #fbfcfe);
+.ag { --walk: 70px; position: relative; border-radius: 16px; background: linear-gradient(180deg, #ffffff, #fbfcfe);
   border: 1px solid #eef2f7; box-shadow: 0 6px 18px -14px rgba(15,23,42,.35); overflow: hidden; }
 
 /* En-tête : nom au-dessus, bien détaché de la scène (aucun chevauchement possible) */
@@ -150,13 +150,13 @@ const CSS = `
 .ag-model i { flex: 0 0 auto; width: 5px; height: 5px; border-radius: 50%; }
 
 /* Scène (bloc séparé, hauteur fixe, tout est contenu ici) */
-.ag-scene { position: relative; height: 138px; overflow: hidden;
+.ag-scene { position: relative; height: 158px; overflow: hidden;
   background: radial-gradient(120% 80% at 50% -10%, color-mix(in srgb, var(--accent) 6%, #fff), #f8fafc 70%); }
 .ag-scene::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 46%;
   background-image: linear-gradient(#eef2f7 1px, transparent 1px); background-size: 100% 13px; opacity: .7; }
 
-/* Bureau (haut) */
-.ag-desk { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); width: 70px; height: 22px;
+/* Bureau (haut) — descendu pour que l'écran noir soit entièrement visible sous l'en-tête */
+.ag-desk { position: absolute; top: 32px; left: 50%; transform: translateX(-50%); width: 70px; height: 22px;
   background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 5px 5px 3px 3px; box-shadow: 0 6px 9px -7px rgba(15,23,42,.35); z-index: 1; }
 .ag-mon { position: absolute; top: -21px; left: 50%; transform: translateX(-50%); width: 46px; height: 26px;
   background: #0f172a; border: 2px solid #1e293b; border-radius: 4px; overflow: hidden;
@@ -173,7 +173,7 @@ const CSS = `
 .ag-pillow { position: absolute; top: 5px; left: 6px; width: 18px; height: 12px; background: #e2e8f0; border-radius: 3px; }
 
 /* PNJ : avatar avec l'icône de l'agent, marche entre bureau et lit */
-.ag-npc { position: absolute; top: 44px; left: 50%; transform: translateX(-50%); z-index: 3;
+.ag-npc { position: absolute; top: 62px; left: 50%; transform: translateX(-50%); z-index: 3;
   animation: ag-walk var(--dur) ease-in-out var(--delay) infinite both; }
 .ag-shadow { position: absolute; left: 50%; top: 30px; width: 30px; height: 8px; transform: translateX(-50%);
   background: radial-gradient(ellipse, rgba(15,23,42,.16), transparent 70%); }
@@ -184,12 +184,12 @@ const CSS = `
   animation: ag-bob .7s ease-in-out infinite; }
 
 /* Légende "ce qu'il fait" — apparaît quand il bosse, sous le bureau */
-.ag-task { position: absolute; top: 74px; left: 50%; transform: translateX(-50%); z-index: 4;
+.ag-task { position: absolute; top: 92px; left: 50%; transform: translateX(-50%); z-index: 4;
   max-width: 90%; text-align: center; font-size: 9px; line-height: 1.25; color: #64748b; opacity: 0;
   animation: ag-sigwork var(--dur) ease-in-out var(--delay) infinite both; }
 .ag-task b { display: block; font-size: 10px; font-weight: 800; color: var(--accent); }
 
-.ag-zzz { position: absolute; top: 78px; left: 58%; display: flex; gap: 2px; z-index: 4; opacity: 0;
+.ag-zzz { position: absolute; top: 96px; left: 58%; display: flex; gap: 2px; z-index: 4; opacity: 0;
   animation: ag-sigsleep var(--dur) ease-in-out var(--delay) infinite both; }
 .ag-zzz span { font-size: 10px; font-weight: 800; color: #94a3b8; animation: ag-zfloat 1.8s ease-in-out infinite; }
 .ag-zzz span:nth-child(2){ font-size: 12px; animation-delay: .25s; } .ag-zzz span:nth-child(3){ font-size: 14px; animation-delay: .5s; }
