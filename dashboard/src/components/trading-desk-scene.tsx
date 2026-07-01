@@ -129,23 +129,24 @@ const CSS = `
 .room-live-dot { width: 7px; height: 7px; border-radius: 50%; background: #ef4444; box-shadow: 0 0 8px #ef4444; animation: room-blink 1.4s infinite; }
 @keyframes room-blink { 0%,100%{opacity:1} 50%{opacity:.25} }
 
-/* Grille responsive : 2 colonnes sur mobile, 4 sur desktop */
-.room-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
-@media (min-width: 1024px) { .room-grid { grid-template-columns: repeat(4, 1fr); gap: 16px; } }
+/* Grille responsive : 2 colonnes sur mobile, 4 sur desktop — espacée */
+.room-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+@media (min-width: 640px) { .room-grid { gap: 20px; } }
+@media (min-width: 1024px) { .room-grid { grid-template-columns: repeat(4, 1fr); gap: 24px; } }
 
 /* ---- Carte agent ---- */
 .ag { --walk: 68px; position: relative; border-radius: 16px; background: linear-gradient(180deg, #ffffff, #fbfcfe);
   border: 1px solid #eef2f7; box-shadow: 0 6px 18px -14px rgba(15,23,42,.35); overflow: hidden; }
 
 /* En-tête : nom au-dessus, bien détaché de la scène (aucun chevauchement possible) */
-.ag-top { display: flex; align-items: center; gap: 8px; padding: 11px 12px; border-bottom: 1px dashed #eef2f7;
+.ag-top { display: flex; align-items: center; gap: 11px; padding: 15px 15px 14px; border-bottom: 1px dashed #eef2f7;
   background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 7%, #fff), #ffffff); }
-.ag-ic { flex: 0 0 auto; width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center;
+.ag-ic { flex: 0 0 auto; width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center;
   color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, #fff); border: 1px solid color-mix(in srgb, var(--accent) 28%, #fff); }
-.ag-txt { display: flex; flex-direction: column; min-width: 0; line-height: 1.15; }
-.ag-name { font-size: 13px; font-weight: 700; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ag-model { display: inline-flex; align-items: center; gap: 4px; font-size: 8.5px; font-family: monospace; text-transform: uppercase;
-  letter-spacing: .03em; color: #94a3b8; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.ag-txt { display: flex; flex-direction: column; min-width: 0; gap: 4px; line-height: 1.15; }
+.ag-name { font-size: 14px; font-weight: 700; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ag-model { display: inline-flex; align-items: center; gap: 5px; font-size: 9px; font-family: monospace; text-transform: uppercase;
+  letter-spacing: .06em; color: #94a3b8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .ag-model i { flex: 0 0 auto; width: 5px; height: 5px; border-radius: 50%; }
 
 /* Scène (bloc séparé, hauteur fixe, tout est contenu ici) */
