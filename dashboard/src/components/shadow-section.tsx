@@ -66,13 +66,14 @@ export function ShadowSection({ positions }: { positions: ShadowPosition[] }) {
           {rejectedPnl < 0
             ? "✓ Reviewer was right — these would have lost money"
             : rejectedPnl > approvedPnl
-              ? "⚠️ Reviewer may be too strict — rejected ones outperforming"
+              ? "Reviewer may be too strict — rejected ones outperforming"
               : "Neutral — not enough signal to conclude yet"}
         </div>
       )}
 
       <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto">
+        <table className="w-full text-sm min-w-[760px]">
           <thead className="bg-slate-50 text-[10px] text-slate-500 uppercase tracking-wider">
             <tr>
               <th className="px-3 py-2 text-left">Ticker</th>
@@ -118,6 +119,7 @@ export function ShadowSection({ positions }: { positions: ShadowPosition[] }) {
             })}
           </tbody>
         </table>
+        </div>
       </div>
     </section>
   );

@@ -1,9 +1,7 @@
 import { createAdminClient } from "@/lib/supabase-admin";
-import { LogoutButton } from "@/components/logout-button";
 import { PipelineMindmap, type PipelineStats } from "@/components/pipeline-mindmap";
 import { ExchangesFeed, type ExchangeLog } from "@/components/exchanges-feed";
-import { Logo } from "@/components/logo";
-import { NavPill } from "@/components/nav-pill";
+import { SiteHeader } from "@/components/site-header";
 
 export const dynamic = "force-dynamic";
 
@@ -36,24 +34,9 @@ export default async function PipelinePage() {
 
   return (
     <main className="min-h-screen">
-      <header className="border-b border-slate-200">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <Logo size={26} />
-            <span className="font-mono font-bold text-sm tracking-tight text-slate-900">AETHER</span>
-            <span className="text-xs text-slate-400">|</span>
-            <span className="text-xs text-slate-500">pipeline LLM</span>
-          </div>
-          <div className="flex items-center gap-4">
-            <NavPill href="/">Dashboard</NavPill>
-            <NavPill href="/desk">Trading Floor</NavPill>
-            <NavPill href="/pipeline" active>Pipeline</NavPill>
-            <LogoutButton />
-          </div>
-        </div>
-      </header>
+      <SiteHeader active="/pipeline" subtitle="pipeline LLM" />
 
-      <div className="max-w-7xl mx-auto px-6 py-8 space-y-10">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-8 sm:space-y-10">
         <PipelineMindmap stats={stats} />
         <ExchangesFeed logs={logs} />
       </div>

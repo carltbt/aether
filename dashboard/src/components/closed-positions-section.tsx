@@ -53,7 +53,8 @@ export function ClosedPositionsSection({ positions }: { positions: ClosedPositio
             <span className="text-xs">L&apos;historique se remplit à la première clôture (stop, target, ou sortie temporelle).</span>
           </div>
         ) : (
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[720px]">
             <thead className="bg-slate-50 text-[10px] text-slate-500 uppercase tracking-wider">
               <tr>
                 <th className="px-4 py-2 text-left">Ticker</th>
@@ -88,6 +89,7 @@ export function ClosedPositionsSection({ positions }: { positions: ClosedPositio
               })}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </section>

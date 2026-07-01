@@ -158,7 +158,8 @@ export function PerformanceSection({ snapshot }: { snapshot: Snapshot | null }) 
         {snapshot.open_positions.length === 0 ? (
           <div className="px-6 py-10 text-center text-sm text-slate-400">Aucune position ouverte.</div>
         ) : (
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[640px]">
             <thead className="bg-slate-50 text-[10px] text-slate-500 uppercase tracking-wider">
               <tr>
                 <th className="px-4 py-2 text-left">Ticker</th>
@@ -191,6 +192,7 @@ export function PerformanceSection({ snapshot }: { snapshot: Snapshot | null }) 
               })}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </section>

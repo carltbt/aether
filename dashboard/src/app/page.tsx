@@ -1,14 +1,12 @@
 import { createAdminClient } from "@/lib/supabase-admin";
 import { formatCurrency, formatNumber, relativeTime, cn } from "@/lib/utils";
-import { LogoutButton } from "@/components/logout-button";
 import { SignalRow } from "@/components/signal-row";
 import { CostTrend } from "@/components/cost-trend";
 import { ShadowSection } from "@/components/shadow-section";
 import { PerfChart } from "@/components/perf-chart";
 import { PerformanceSection, type Snapshot } from "@/components/performance-section";
 import { ClosedPositionsSection, type ClosedPosition } from "@/components/closed-positions-section";
-import { Logo } from "@/components/logo";
-import { NavPill } from "@/components/nav-pill";
+import { SiteHeader } from "@/components/site-header";
 
 export const dynamic = "force-dynamic";
 
@@ -127,37 +125,20 @@ export default async function DashboardPage() {
 
   return (
     <main className="min-h-screen">
-      {/* Header */}
-      <header className="border-b border-slate-200">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <Logo size={26} />
-            <span className="font-mono font-bold text-sm tracking-tight text-slate-900">AETHER</span>
-            <span className="text-xs text-slate-400">|</span>
-            <span className="text-xs text-slate-500">admin dashboard</span>
-          </div>
-          <div className="flex items-center gap-4">
-            {heartbeat && (
-              <span className="flex items-center gap-1.5 text-xs text-slate-500">
-                <span
-                  className={cn(
-                    "w-1.5 h-1.5 rounded-full",
-                    heartbeat.status === "ok" ? "bg-emerald-500" : "bg-amber-500",
-                  )}
-                />
-                last beat {relativeTime(heartbeat.recorded_at)}
-              </span>
-            )}
-            <NavPill href="/desk">Trading Floor</NavPill>
-            <NavPill href="/pipeline">Pipeline</NavPill>
-            <LogoutButton />
-          </div>
-        </div>
-      </header>
+      <SiteHeader
+        active="/"
+        subtitle="admin dashboard"
+        beat={heartbeat && (
+          <span className="hidden md:flex items-center gap-1.5 text-xs text-slate-500 whitespace-nowrap">
+            <span className={cn("w-1.5 h-1.5 rounded-full", heartbeat.status === "ok" ? "bg-emerald-500" : "bg-amber-500")} />
+            last beat {relativeTime(heartbeat.recorded_at)}
+          </span>
+        )}
+      />
 
-      <div className="max-w-7xl mx-auto px-6 py-8 space-y-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-8 sm:space-y-10">
         {/* Hero — regime + counts */}
-        <section className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <section className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
           <StatCard
             label="Regime"
             value={dailyCtx?.market_regime ?? "—"}

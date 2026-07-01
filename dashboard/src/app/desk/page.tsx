@@ -1,7 +1,5 @@
 import { createAdminClient } from "@/lib/supabase-admin";
-import { LogoutButton } from "@/components/logout-button";
-import { Logo } from "@/components/logo";
-import { NavPill } from "@/components/nav-pill";
+import { SiteHeader } from "@/components/site-header";
 import { TradingDeskScene, type DeskStats } from "@/components/trading-desk-scene";
 
 export const dynamic = "force-dynamic";
@@ -38,27 +36,12 @@ export default async function DeskPage() {
 
   return (
     <main className="min-h-screen">
-      <header className="border-b border-slate-200">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <Logo size={26} />
-            <span className="font-mono font-bold text-sm tracking-tight text-slate-900">AETHER</span>
-            <span className="text-xs text-slate-400">|</span>
-            <span className="text-xs text-slate-500">salle des agents</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <NavPill href="/">Dashboard</NavPill>
-            <NavPill href="/pipeline">Pipeline</NavPill>
-            <NavPill href="/desk" active>Trading Floor</NavPill>
-            <LogoutButton />
-          </div>
-        </div>
-      </header>
+      <SiteHeader active="/desk" subtitle="salle des agents" />
 
-      <div className="max-w-7xl mx-auto px-6 py-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
         <TradingDeskScene stats={stats} tickers={tickers} />
-        <p className="text-center text-xs text-slate-400 mt-4">
-          Chaque PNJ est un agent du pipeline. Quand il bosse, il va à son <strong className="text-slate-500">bureau</strong> (écran allumé, badge « actif »). Quand il est en veille, il va <strong className="text-slate-500">dormir</strong> (« z z z »). Les agents les plus sollicités passent plus de temps au bureau.
+        <p className="text-center text-xs text-slate-400 mt-5 max-w-2xl mx-auto leading-relaxed">
+          Chaque personnage est un agent du pipeline. Quand il bosse, il rejoint son <strong className="text-slate-500">bureau</strong> (écran allumé, « au bureau »). Quand il est en veille, il va <strong className="text-slate-500">dormir</strong> (« z z z »). Les agents les plus sollicités passent plus de temps au bureau.
         </p>
       </div>
     </main>

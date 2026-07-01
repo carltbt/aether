@@ -1,4 +1,5 @@
 import { cn, formatCurrency, formatNumber } from "@/lib/utils";
+import { AgentIcon, type AgentIconName } from "./agent-icon";
 
 export interface NodeStat { count: number; cost: number; avg_latency: number; }
 export type PipelineStats = Record<string, NodeStat>;
@@ -9,8 +10,8 @@ const MODEL_BADGE: Record<string, string> = {
   Code: "bg-slate-100 text-slate-500 border-slate-200",
 };
 
-function LlmNode({ title, subtitle, model, stat, accent }: {
-  title: string; subtitle: string; model: "Haiku" | "Sonnet"; stat?: NodeStat; accent?: boolean;
+function LlmNode({ title, subtitle, model, stat, accent, icon }: {
+  title: string; subtitle: string; model: "Haiku" | "Sonnet"; stat?: NodeStat; accent?: boolean; icon: AgentIconName;
 }) {
   return (
     <div className={cn(
@@ -20,7 +21,10 @@ function LlmNode({ title, subtitle, model, stat, accent }: {
       <div className="absolute left-0 top-3 bottom-3 w-1 rounded-full bg-brand-gradient" />
       <div className="pl-2">
         <div className="flex items-center justify-between gap-2">
-          <span className="font-semibold text-sm text-slate-900">{title}</span>
+          <span className="flex items-center gap-2 min-w-0">
+            <span className="shrink-0 text-slate-400"><AgentIcon name={icon} size={15} /></span>
+            <span className="font-semibold text-sm text-slate-900 truncate">{title}</span>
+          </span>
           <span className={cn("text-[10px] font-mono font-bold uppercase px-1.5 py-0.5 rounded border shrink-0", MODEL_BADGE[model])}>{model}</span>
         </div>
         <div className="text-[11px] text-slate-400 mt-0.5">{subtitle}</div>
@@ -104,25 +108,25 @@ export function PipelineMindmap({ stats }: { stats: PipelineStats }) {
 
         <StageLabel n={3} label="Analystes — 3 passes parallèles" />
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <LlmNode title="Technique" subtitle="RSI · MACD · ADX · setups" model="Haiku" stat={stats["analysis_pass1"]} />
-          <LlmNode title="Sentiment" subtitle="News · catalyseurs" model="Haiku" stat={stats["analysis_pass2"]} />
-          <LlmNode title="Fondamentaux" subtitle="DCF · qualité · valorisation" model="Sonnet" stat={stats["analysis_pass3"]} />
+          <LlmNode icon="chart" title="Technique" subtitle="RSI · MACD · ADX · setups" model="Haiku" stat={stats["analysis_pass1"]} />
+          <LlmNode icon="news" title="Sentiment" subtitle="News · catalyseurs" model="Haiku" stat={stats["analysis_pass2"]} />
+          <LlmNode icon="flask" title="Fondamentaux" subtitle="DCF · qualité · valorisation" model="Sonnet" stat={stats["analysis_pass3"]} />
         </div>
         <Connector />
 
         <StageLabel n={4} label="Researchers — débat isolé" />
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <LlmNode title="Bull 🐂" subtitle="Meilleur argumentaire haussier" model="Sonnet" stat={stats["researcher_bull"]} />
-          <LlmNode title="Bear 🐻" subtitle="Meilleur argumentaire baissier" model="Sonnet" stat={stats["researcher_bear"]} />
+          <LlmNode icon="trendUp" title="Bull" subtitle="Meilleur argumentaire haussier" model="Sonnet" stat={stats["researcher_bull"]} />
+          <LlmNode icon="trendDown" title="Bear" subtitle="Meilleur argumentaire baissier" model="Sonnet" stat={stats["researcher_bear"]} />
         </div>
         <Connector />
 
         <StageLabel n={5} label="Trader — décision finale" />
-        <LlmNode title="Trader (Guided Mode)" subtitle="Synthèse du débat → BUY / HOLD + sizing, stop, target" model="Sonnet" stat={stats["decision"]} accent />
+        <LlmNode icon="cpu" title="Trader (Guided Mode)" subtitle="Synthèse du débat → BUY / HOLD + sizing, stop, target" model="Sonnet" stat={stats["decision"]} accent />
         <Connector />
 
         <StageLabel n={6} label="Reviewer — contrôle qualité" />
-        <LlmNode title="Reviewer (3 perspectives)" subtitle="Conservateur · Neutre · Agressif → veto si 2/3 REJECT" model="Sonnet" stat={stats["reviewer"]} accent />
+        <LlmNode icon="scale" title="Reviewer (3 perspectives)" subtitle="Conservateur · Neutre · Agressif → veto si 2/3 REJECT" model="Sonnet" stat={stats["reviewer"]} accent />
         <Connector />
 
         <StageLabel n={7} label="Garde-fous & exécution" />

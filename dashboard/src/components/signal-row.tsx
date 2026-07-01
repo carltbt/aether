@@ -60,21 +60,21 @@ export function SignalRow({ signal }: { signal: Signal }) {
         onClick={() => setExpanded(!expanded)}
         className="w-full px-4 py-3 hover:bg-slate-50 transition-colors text-left"
       >
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3 sm:gap-4">
           {/* Ticker */}
-          <div className="ticker w-16 text-sm">{signal.ticker}</div>
+          <div className="ticker w-14 sm:w-16 text-sm shrink-0">{signal.ticker}</div>
 
           {/* Outcome badge — état EFFECTIF du signal, pas juste la décision Trader */}
-          <OutcomeBadge outcome={outcome} />
+          <span className="shrink-0"><OutcomeBadge outcome={outcome} /></span>
 
-          {/* Conviction */}
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs text-slate-400">conv</span>
-            <ConvictionBar value={signal.conviction} />
-            <span className="text-sm font-semibold tabular w-8">{signal.conviction}</span>
+          {/* Conviction — barre masquée sur mobile, chiffre conservé */}
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span className="hidden sm:inline text-xs text-slate-400">conv</span>
+            <div className="hidden sm:block"><ConvictionBar value={signal.conviction} /></div>
+            <span className="text-sm font-semibold tabular w-6 text-center sm:text-left">{signal.conviction}</span>
           </div>
 
-          {/* Cluster scores compact */}
+          {/* Cluster scores compact (desktop) */}
           <div className="hidden md:flex items-center gap-1 flex-1">
             {CLUSTERS.map((c) => {
               const score = signal[c.key as keyof Signal] as number | null;
@@ -84,18 +84,23 @@ export function SignalRow({ signal }: { signal: Signal }) {
             })}
           </div>
 
-          {/* Pipeline trace — décision Trader + verdict Reviewer (compact) */}
-          <PipelineTrace signal={signal} outcome={outcome} />
+          {/* Espaceur mobile (pousse l'heure à droite quand les clusters sont masqués) */}
+          <div className="flex-1 md:hidden" />
+
+          {/* Pipeline trace — masquée sur mobile (le badge d'état suffit) */}
+          <div className="hidden sm:block shrink-0">
+            <PipelineTrace signal={signal} outcome={outcome} />
+          </div>
 
           {/* Time */}
-          <div className="text-xs text-slate-400 tabular w-20 text-right">
+          <div className="text-xs text-slate-400 tabular w-14 sm:w-20 text-right shrink-0">
             {relativeTime(signal.created_at)}
           </div>
 
           {/* Expand chevron */}
           <svg
             className={cn(
-              "w-3 h-3 text-slate-400 transition-transform",
+              "w-3 h-3 text-slate-400 transition-transform shrink-0",
               expanded && "rotate-180",
             )}
             fill="none"
@@ -110,7 +115,7 @@ export function SignalRow({ signal }: { signal: Signal }) {
       {expanded && (
         <div className="px-4 pb-4 pt-2 bg-slate-50 border-t border-slate-100 space-y-3">
           {/* Cluster scores detail */}
-          <div className="grid grid-cols-6 gap-3 pt-2">
+          <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 sm:gap-3 pt-2">
             {CLUSTERS.map((c) => {
               const score = signal[c.key as keyof Signal] as number | null;
               return (
@@ -125,7 +130,7 @@ export function SignalRow({ signal }: { signal: Signal }) {
           </div>
 
           {/* Meta */}
-          <div className="flex items-center gap-4 text-xs text-slate-500">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-slate-500">
             {signal.strategy_used && (
               <span>
                 Strategy <span className="font-mono font-semibold text-slate-700">{signal.strategy_used}</span>

@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { cn, formatCurrency, formatNumber, relativeTime } from "@/lib/utils";
+import { AgentIcon } from "./agent-icon";
 
 export interface ExchangeLog {
   id: string;
@@ -20,8 +21,8 @@ const META: Record<string, { label: string; model: "Haiku" | "Sonnet"; cls: stri
   analysis_pass1: { label: "Analyste · Technique", model: "Haiku", cls: "bg-violet-50 text-violet-700 border-violet-200", group: "analyst" },
   analysis_pass2: { label: "Analyste · Sentiment", model: "Haiku", cls: "bg-violet-50 text-violet-700 border-violet-200", group: "analyst" },
   analysis_pass3: { label: "Analyste · Fondamentaux", model: "Sonnet", cls: "bg-blue-50 text-blue-700 border-blue-200", group: "analyst" },
-  researcher_bull: { label: "Researcher · Bull 🐂", model: "Sonnet", cls: "bg-emerald-50 text-emerald-700 border-emerald-200", group: "researcher" },
-  researcher_bear: { label: "Researcher · Bear 🐻", model: "Sonnet", cls: "bg-red-50 text-red-700 border-red-200", group: "researcher" },
+  researcher_bull: { label: "Researcher · Bull", model: "Sonnet", cls: "bg-emerald-50 text-emerald-700 border-emerald-200", group: "researcher" },
+  researcher_bear: { label: "Researcher · Bear", model: "Sonnet", cls: "bg-red-50 text-red-700 border-red-200", group: "researcher" },
   decision: { label: "Trader", model: "Sonnet", cls: "bg-slate-900 text-white border-slate-900", group: "trader" },
   reviewer: { label: "Reviewer", model: "Sonnet", cls: "bg-amber-50 text-amber-700 border-amber-200", group: "reviewer" },
 };
@@ -101,8 +102,8 @@ export function ExchangesFeed({ logs }: { logs: ExchangeLog[] }) {
                   <span className={cn("text-[10px] font-medium uppercase tracking-wide px-2 py-0.5 rounded border", m.cls)}>{m.label}</span>
                   {l.ticker && <span className="ticker text-sm font-semibold text-slate-900">{l.ticker}</span>}
                   {c && <span className="text-[10px] font-mono font-bold uppercase px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200">{c}</span>}
-                  <span className="ml-auto flex items-center gap-3 text-[11px] text-slate-400 tabular">
-                    <span>{formatNumber(l.input_tokens)}→{formatNumber(l.output_tokens)} tok</span>
+                  <span className="ml-auto flex items-center gap-2 sm:gap-3 text-[11px] text-slate-400 tabular">
+                    <span className="hidden sm:inline">{formatNumber(l.input_tokens)}→{formatNumber(l.output_tokens)} tok</span>
                     <span>{formatCurrency(l.cost_usd)}</span>
                     <span>{l.latency_ms != null ? `${(l.latency_ms / 1000).toFixed(1)}s` : "—"}</span>
                     <span>{relativeTime(l.created_at)}</span>
@@ -115,7 +116,7 @@ export function ExchangesFeed({ logs }: { logs: ExchangeLog[] }) {
               </button>
               {isOpen && (
                 <div className="px-4 pb-4 border-t border-slate-100 pt-3">
-                  {l.error && <div className="text-xs text-red-600 mb-2">⚠️ {l.error}</div>}
+                  {l.error && <div className="text-xs text-red-600 mb-2 flex items-center gap-1.5"><AgentIcon name="warn" size={13} className="shrink-0" />{l.error}</div>}
                   <pre className="text-[11px] leading-relaxed text-slate-700 bg-slate-50 border border-slate-100 rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-words">
                     {l.raw_output ? JSON.stringify(l.raw_output, null, 2) : "(pas de sortie structurée)"}
                   </pre>
