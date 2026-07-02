@@ -310,10 +310,12 @@ Deno.serve(async (req: Request) => {
   // reflète déjà l'ajustement.
   const confBuy = typeof bullCase?.confidence_buy === "number" ? bullCase.confidence_buy as number : null;
   const riskScore = typeof bearCase?.risk_score === "number" ? bearCase.risk_score as number : null;
+  // +10 SEULEMENT (jamais de pénalité) — contrainte : ce signal ne doit JAMAIS durcir
+  // le système. On amplifie un setup bull/bear fortement aligné ; un setup faible reste
+  // géré par les scores + le Reviewer, on ne le pénalise pas ici.
   let debateAlignment = 0;
-  if (confBuy !== null && riskScore !== null) {
-    if (confBuy >= 7 && riskScore <= 4) debateAlignment = 10;
-    else if (riskScore >= 7 && confBuy <= 4) debateAlignment = -10;
+  if (confBuy !== null && riskScore !== null && confBuy >= 7 && riskScore <= 4) {
+    debateAlignment = 10;
   }
   const convictionAnchored = Math.max(0, Math.min(100, convictionRaw + debateAlignment));
 
