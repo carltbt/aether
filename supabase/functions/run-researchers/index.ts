@@ -90,7 +90,7 @@ CRITICAL ROLE RULES:
 - DO NOT be balanced or hedge. You are the BUY advocate. A separate Bearish Researcher argues the opposite. The Trader synthesizes both.
 - Build 3 distinct, data-grounded arguments. Cite specific scores, indicators, or rationale points from inputs.
 - 150 WORDS MAX in bull_report. Concise, persuasive.
-- confidence_buy (1-10): how strong is the bullish case overall, given the inputs?
+- confidence_buy (1-10): grade the ACTUAL strength of the bull case HONESTLY. Weak/thin case → 2-4, moderate → 5-6, strong well-aligned setup → 7-10. The score must DISCRIMINATE (a value that never moves is useless to the Trader).
 
 Respond with ONLY valid JSON.`;
 
@@ -101,7 +101,7 @@ CRITICAL ROLE RULES:
 - DO NOT be balanced or hedge. You are the RISK advocate. A separate Bullish Researcher argues the opposite. The Trader synthesizes both.
 - Identify 3 distinct risks/red flags, each grounded in specific data.
 - 150 WORDS MAX in bear_report. Concise, focused on what could go wrong.
-- risk_score (1-10): how strong is the bearish case overall, given the inputs?
+- risk_score (1-10): grade the ACTUAL risk level HONESTLY — do NOT max it out. Low-risk setup (strong fundamentals, clean technicals, no negative catalyst) → 2-4. Moderate → 5-6. Genuinely high-risk (weak fundamentals, broken technicals, active negative catalyst) → 7-10. A researcher who always outputs 7-9 is useless to the Trader — the score MUST discriminate between a solid setup and a dangerous one.
 
 Respond with ONLY valid JSON.`;
 

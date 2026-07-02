@@ -47,6 +47,22 @@ async function fmpGet<T>(path: string, params: Record<string, string | number>, 
   }
 }
 
+// Jour de bourse ? via le calendrier Alpaca (gère week-ends ET fériés US). Fallback
+// permissif si Alpaca indispo (ne bloque pas le fetch).
+async function isTradingDay(): Promise<boolean> {
+  const base = Deno.env.get("ALPACA_API_BASE_URL");
+  const keyId = Deno.env.get("ALPACA_API_KEY_ID");
+  const secret = Deno.env.get("ALPACA_API_SECRET_KEY");
+  if (!base || !keyId || !secret) return true;
+  try {
+    const today = isoToday();
+    const r = await fetch(`${base}/v2/calendar?start=${today}&end=${today}`, { headers: { "APCA-API-KEY-ID": keyId, "APCA-API-SECRET-KEY": secret } });
+    if (!r.ok) return true;
+    const d = await r.json();
+    return Array.isArray(d) && d.length > 0;
+  } catch { return true; }
+}
+
 type Regime = "FREE" | "GUIDED" | "STRICT" | "PAUSE";
 // Hystérésis (diagnostic 26/06) : bande tampon ±1 pt VIX pour éviter le flip-flop
 // FREE↔GUIDED↔STRICT jour à jour (whiplash de sizing). Le seuil d'ENTRÉE dans un
@@ -79,13 +95,21 @@ function extractCloses(historical: unknown): number[] {
     .map(d => d.close as number);
 }
 
-Deno.serve(async () => {
+Deno.serve(async (req: Request) => {
   const t0 = Date.now();
+  const forced = new URL(req.url).searchParams.get("force") === "true";
   const fmpKey = Deno.env.get("FMP_API_KEY");
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   if (!fmpKey || !supabaseUrl || !serviceKey) return jsonResponse({ ok: false, error: "missing_env_vars" }, 500);
   const supabase = createClient(supabaseUrl, serviceKey);
+
+  // Staleness guard (audit D-005) : un jour NON boursier (week-end/férié), FMP renvoie la
+  // clôture de la veille → écrire cette ligne périmée fausserait le régime (et donc le
+  // sizing) via l'hystérésis. On skip l'upsert (contournable via ?force=true).
+  if (!forced && !(await isTradingDay())) {
+    return jsonResponse({ ok: true, skipped: "non_trading_day", date: isoToday(), note: "Pas d'upsert (jour non boursier) — évite un contexte périmé." }, 200);
+  }
 
   const errors: Record<string, string> = {};
   const raw: Record<string, unknown> = {};

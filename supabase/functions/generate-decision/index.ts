@@ -303,6 +303,20 @@ Deno.serve(async (req: Request) => {
   if (typeof convictionRaw !== "number") convictionRaw = 0;
   if (!scores) return jsonResponse({ ok: false, error: "no_scores_available" }, 400);
 
+  // Bull/Bear ±10 alignment (STRATEGY §1103, D-005) — signal de convergence DÉTERMINISTE
+  // en code (avant, laissé à la discrétion du LLM). Bull très confiant + Bear peu inquiet
+  // → +10 (amplifie) ; Bear très inquiet + Bull faible → −10. Symétrique grâce aux
+  // risk_score/confidence_buy désormais gradués (run-researchers). L'ancre du Trader
+  // reflète déjà l'ajustement.
+  const confBuy = typeof bullCase?.confidence_buy === "number" ? bullCase.confidence_buy as number : null;
+  const riskScore = typeof bearCase?.risk_score === "number" ? bearCase.risk_score as number : null;
+  let debateAlignment = 0;
+  if (confBuy !== null && riskScore !== null) {
+    if (confBuy >= 7 && riskScore <= 4) debateAlignment = 10;
+    else if (riskScore >= 7 && confBuy <= 4) debateAlignment = -10;
+  }
+  const convictionAnchored = Math.max(0, Math.min(100, convictionRaw + debateAlignment));
+
   // P-001 : fetch real macro context depuis daily_context (sauf si déjà fourni en POST body)
   if (marketContext.source === "fallback_mock_no_daily_context") {
     const { data: ctx } = await supabase
@@ -327,7 +341,7 @@ Deno.serve(async (req: Request) => {
   }
 
   // --- Trader call ---
-  const trader = await callClaude(anthropicKey, TRADER_SYSTEM, traderUserPrompt(ticker, sector ?? "Unknown", scores, convictionRaw, bullCase, bearCase, marketContext, portfolio), 1500);
+  const trader = await callClaude(anthropicKey, TRADER_SYSTEM, traderUserPrompt(ticker, sector ?? "Unknown", scores, convictionAnchored, bullCase, bearCase, marketContext, portfolio), 1500);
   const traderLogId = await logCall(supabase, "decision", ticker, trader);
 
   const decision = trader.parsed as {
@@ -352,7 +366,7 @@ Deno.serve(async (req: Request) => {
       .from("signals")
       .update({
         action: decision.action,
-        conviction: decision.conviction ?? convictionRaw,
+        conviction: decision.conviction ?? convictionAnchored,
         position_size_pct: decision.position_size_pct ?? null,
         entry_price_target: decision.entry_price_target ?? null,
         stop_loss_pct: decision.stop_loss_pct ?? null,
@@ -380,6 +394,8 @@ Deno.serve(async (req: Request) => {
     inputs_used: {
       scores,
       conviction_raw: convictionRaw,
+      conviction_anchored: convictionAnchored,
+      debate_alignment: debateAlignment,
       bull_case_present: !!bullCase,
       bear_case_present: !!bearCase,
       market_context: marketContext,

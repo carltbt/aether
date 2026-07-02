@@ -155,7 +155,12 @@ Le recompute C1 déterministe (D-005) corrige un biais **haussier** du LLM → p
 
 **Vérification (baseline live avant D-005b)** : 291 signaux, conviction moy **53.7**, **74/291** franchissent le gate 60, **111 coincés à 50-59** juste sous le gate, Conservative **52/52 REJECT**. Direction de chaque changement : C1-renorm ↑conviction momentum, C3-baseline +4 sur les « no-activity », Conservative-gradué débloque les BUY approuvés à taille pleine. **Net : MOINS strict** (plus de BUY franchissent + plus approuvés + taille pleine), ce qui compense et dépasse la sévérité du recompute C1. Le seul nouveau gate dur (RR 2:1) bloque **0 BUY actuel** (48/48 déjà ≥2.0).
 
-**Reste en attente** (strictness-neutre, non fait) : Bull/Bear ±10 (generate-decision), staleness contexte write-side (fetch-daily-context), shadow filter (track-shadow-portfolio), P-006 (re-éval hebdo 3-pass + colonnes entry-snapshot + cron).
+### D-005c — Tout l'actionnable restant (déployé, strictness-neutre)
+Les 4 items restants du diagnostic, tous déployés et **sans durcir le système** :
+- **Bull/Bear ±10** (generate-decision) : ajustement de convergence DÉTERMINISTE en code (Bull confiant + Bear peu inquiet → +10 ; inverse → −10). **Pré-requis intégré** : le `risk_score` du Bear était structurellement toujours 7-9 (biais always-pessimistic, comme Conservative) → la règle brute n'aurait fait que **soustraire** = plus strict. On a donc AUSSI gradué les prompts Bull/Bear (run-researchers) pour que le score discrimine → le +10 peut désormais se déclencher → symétrique, non-strict.
+- **Staleness contexte** (fetch-daily-context) : garde jour-de-bourse via le calendrier Alpaca — sur un week-end/férié, on **skip l'upsert** (au lieu d'écrire la clôture périmée de la veille qui faussait le régime/sizing). Neutre les jours ouvrés. `?force=true` pour bypass.
+- **Shadow filter** (track-shadow-portfolio) : l'entrée exclut les BUY jamais revus (PENDING/EXPIRED) et le bucket « rejected » compte le vrai `reviewer_verdict='REJECT'` (avant : `!approved`, qui incluait les orphelins) → le verdict « le Reviewer est-il trop strict ? » n'est plus corrompu.
+- **P-006** (reevaluate-positions, NOUVELLE fonction, cron dimanche 23:00 UTC) : re-score hebdo de chaque position OPEN (via run-analysis-passes, sans persister de signal) → conviction fraîche + palier <40/40-59/≥60, stockée dans `positions.reeval_conviction`. **Sûreté** : ne vend PAS elle-même (pas de nouveau chemin d'oversell) — elle alerte (Discord + heartbeat) sur <40 ; la SORTIE réelle reste gérée par review-positions (durci) + update-positions. Vérifié en live (KBH 68→66, tier hold).
 
 ---
 

@@ -90,11 +90,14 @@ function computeTrailedStopPct(returnPct: number): number | null {
 async function openNewShadowPositions(supabase: SupabaseClient, fmpKey: string) {
   const cutoff24h = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
 
-  // Get all BUY signals from past 24h
+  // Get BUY signals from past 24h QUI ONT ÉTÉ REVUS (audit D-005) : on exclut les
+  // PENDING/EXPIRED (jamais arrivés au Reviewer) — sinon ils polluent le bucket
+  // « rejected » et faussent le verdict « le Reviewer est-il trop strict ? ».
   const { data: recentBuys } = await supabase
     .from("signals")
     .select("*")
     .eq("action", "BUY")
+    .in("reviewer_verdict", ["APPROVE", "REJECT"])
     .gte("created_at", cutoff24h);
 
   if (!recentBuys || recentBuys.length === 0) {
@@ -270,12 +273,13 @@ Deno.serve(async () => {
   // Aggregate stats for response
   const { data: allShadows } = await supabase
     .from("shadow_positions")
-    .select("status, pnl_usd, pnl_pct, was_reviewer_approved");
+    .select("status, pnl_usd, pnl_pct, was_reviewer_approved, reviewer_verdict");
   const allOpen = (allShadows ?? []).filter(s => s.status === "OPEN").length;
   const allClosed = (allShadows ?? []).filter(s => s.status === "CLOSED").length;
   const totalPnlUsd = (allShadows ?? []).reduce((sum, s) => sum + Number(s.pnl_usd ?? 0), 0);
   const approvedPnlUsd = (allShadows ?? []).filter(s => s.was_reviewer_approved).reduce((sum, s) => sum + Number(s.pnl_usd ?? 0), 0);
-  const rejectedPnlUsd = (allShadows ?? []).filter(s => !s.was_reviewer_approved).reduce((sum, s) => sum + Number(s.pnl_usd ?? 0), 0);
+  // Bucket « rejected » sur le vrai verdict REJECT (pas !approved, qui incluait PENDING/EXPIRED).
+  const rejectedPnlUsd = (allShadows ?? []).filter(s => s.reviewer_verdict === "REJECT").reduce((sum, s) => sum + Number(s.pnl_usd ?? 0), 0);
 
   return jsonResponse({
     ok: true,
